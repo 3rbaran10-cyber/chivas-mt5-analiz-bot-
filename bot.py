@@ -8,7 +8,7 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
-GROQ_MODEL = "llama-3.2-90b-vision-preview"
+GROQ_MODEL = "llama-3.2-11b-vision-preview"
 
 class Health(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -34,14 +34,6 @@ Sana 4 grafik gönderiliyor:
 
 GÖREV: M15 + M30 + H1 grafiklerini analiz edip, M1 grafiği için giriş sinyali üret.
 
-KULLANMAN GEREKEN TEKNİKLER:
-- Çoklu zaman dilimi konfluens (MTF)
-- Market yapısı (HH/LL, BOS, CHoCH)
-- Destek/direnç, trend çizgileri
-- EMA 20/50/200, RSI, MACD, Bollinger
-- Fibonacci, mum formasyonları, grafik formasyonları
-- Sentetik endeks özel davranışları (Crash/Boom spike, Volatility rastgele, GainX/PainX trend, SwitchX yön değişimi, TrendX yeni trend)
-
 SADECE şu JSON formatında cevap ver, başka hiçbir şey yazma:
 
 {
@@ -60,7 +52,7 @@ SADECE şu JSON formatında cevap ver, başka hiçbir şey yazma:
   "formasyonlar": ["bearish engulfing"],
   "kullanilan_teknikler": ["MTF konfluens", "RSI divergence"],
   "kisa_analiz": "2-3 cümle net özet",
-  "gerekce": "Madde 1\\nMadde 2\\nMadde 3\\nMadde 4\\nMadde 5",
+  "gerekce": "Madde 1\\nMadde 2\\nMadde 3",
   "m1_tahmini": "M1'de sonraki 5-15 dakikada beklenen hareket",
   "yol_puani": [50, 45, 40, 35, 30, 25, 20],
   "uyari": "Yatırım tavsiyesi değildir."
@@ -86,10 +78,13 @@ def send_photo(cid, photo_bytes, caption=""):
     except Exception as e:
         print(f"send_photo hatası: {e}", flush=True)
 
-def get_file_bytes(file_id):
+def get_file_url(file_id):
     r = requests.get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getFile",
                      params={"file_id": file_id}, timeout=20).json()
-    url = f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/{r['result']['file_path']}"
+    return f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/{r['result']['file_path']}"
+
+def get_file_bytes(file_id):
+    url = get_file_url(file_id)
     return requests.get(url, timeout=30).content
 
 def analyze_4_charts(imgs, cid):
@@ -97,19 +92,11 @@ def analyze_4_charts(imgs, cid):
     content = [{"type": "text", "text": PROMPT}]
     for tf in ["M15", "M30", "H1", "M1"]:
         send_msg(cid, f"🔍 DEBUG: {tf} işleniyor")
-        img_small = Image.open(io.BytesIO(imgs[tf])).convert("RGB")
-        img_small.thumbnail((800, 800))
-        buf = io.BytesIO()
-        img_small.save(buf, format="JPEG", quality=70)
-        b64 = base64.b64encode(buf.getvalue()).decode()
-        del img_small
-        del buf
         content.append({"type": "text", "text": f"--- {tf} grafiği ---"})
         content.append({
             "type": "image_url",
-            "image_url": {"url": f"data:image/jpeg;base64,{b64}"}
+            "image_url": {"url": imgs[tf]}
         })
-        del b64
     send_msg(cid, "🔍 DEBUG: Groq'a gönderiliyor...")
     body = {
         "model": GROQ_MODEL,
@@ -124,7 +111,7 @@ def analyze_4_charts(imgs, cid):
     resp = requests.post(GROQ_URL, headers=headers, json=body, timeout=90)
     send_msg(cid, f"🔍 DEBUG: Groq HTTP = {resp.status_code}")
     if resp.status_code != 200:
-        send_msg(cid, f"🔍 Groq cevap: {resp.text[:300]}")
+        send_msg(cid, f"🔍 Groq cevap: {resp.text[:400]}")
         raise Exception(f"HTTP {resp.status_code}")
     r = resp.json()
     text = r["choices"][0]["message"]["content"].strip()
@@ -225,7 +212,7 @@ def main():
 
                 if "photo" in msg:
                     fid = msg["photo"][-1]["file_id"]
-                    img = get_file_bytes(fid)
+                    img_url = get_file_url(fid)
 
                     if cid not in user_charts:
                         user_charts[cid] = {"step": 0, "imgs": {}}
@@ -236,7 +223,7 @@ def main():
                         user_charts[cid] = {"step": 0, "imgs": {}}
                         step = 0
                     tf = sirali[step]
-                    user_charts[cid]["imgs"][tf] = img
+                    user_charts[cid]["imgs"][tf] = img_url
                     user_charts[cid]["step"] += 1
                     kalan = 4 - user_charts[cid]["step"]
 
@@ -247,7 +234,8 @@ def main():
                         try:
                             a = analyze_4_charts(user_charts[cid]["imgs"], cid)
                             kart = build_card(a)
-                            gorsel = draw_path(user_charts[cid]["imgs"]["M1"], a.get("yon","BEKLE"), a.get("yol_puani", []))
+                            img_m1 = get_file_bytes(fid)
+                            gorsel = draw_path(img_m1, a.get("yon","BEKLE"), a.get("yol_puani", []))
                             if gorsel:
                                 send_photo(cid, gorsel, caption=kart)
                             else:
