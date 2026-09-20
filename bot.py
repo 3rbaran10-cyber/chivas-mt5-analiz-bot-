@@ -1,11 +1,25 @@
 import os
 import io, json, base64, time, math, requests
 from PIL import Image, ImageDraw
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import threading
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+
+class Health(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"OK")
+    def log_message(self, *a):
+        pass
+
+def run_health_server():
+    port = int(os.environ.get("PORT", 10000))
+    HTTPServer(("0.0.0.0", port), Health).serve_forever()
 
 user_charts = {}
 
@@ -175,6 +189,7 @@ def build_card(a):
     return "\n".join(t)
 
 def main():
+    threading.Thread(target=run_health_server, daemon=True).start()
     print("Bot çalışıyor...")
     offset = 0
     while True:
