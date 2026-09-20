@@ -108,7 +108,13 @@ def analyze_4_charts(imgs):
         parts.append({"inline_data": {"mime_type": "image/jpeg", "data": b64}})
     body = {"contents": [{"parts": parts}]}
     headers = {"Content-Type": "application/json", "x-goog-api-key": GEMINI_API_KEY}
-    r = requests.post(GEMINI_URL, headers=headers, json=body, timeout=90).json()
+    resp = requests.post(GEMINI_URL, headers=headers, json=body, timeout=90)
+    try:
+        r = resp.json()
+    except:
+        raise Exception(f"HTTP {resp.status_code}: {resp.text[:300]}")
+    if "candidates" not in r:
+        raise Exception(f"Gemini: {json.dumps(r, ensure_ascii=False)[:400]}")
     text = r["candidates"][0]["content"]["parts"][0]["text"].strip()
     if text.startswith("```"):
         text = text.split("```")[1]
