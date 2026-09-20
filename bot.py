@@ -103,7 +103,11 @@ def get_file_bytes(file_id):
 def analyze_4_charts(imgs):
     parts = [{"text": PROMPT}]
     for tf in ["M15", "M30", "H1", "M1"]:
-        b64 = base64.b64encode(imgs[tf]).decode()
+        img_small = Image.open(io.BytesIO(imgs[tf])).convert("RGB")
+        img_small.thumbnail((900, 900))
+        buf = io.BytesIO()
+        img_small.save(buf, format="JPEG", quality=75)
+        b64 = base64.b64encode(buf.getvalue()).decode()
         parts.append({"text": f"--- {tf} grafiği ---"})
         parts.append({"inline_data": {"mime_type": "image/jpeg", "data": b64}})
     body = {"contents": [{"parts": parts}]}
