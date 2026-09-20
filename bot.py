@@ -125,8 +125,9 @@ def analyze_4_charts(imgs, cid):
         del b64
     send_msg(cid, "🔍 DEBUG: Gemini'ye gönderiliyor...")
     body = {"contents": [{"parts": parts}]}
-    headers = {"Content-Type": "application/json", "x-goog-api-key": GEMINI_API_KEY}
-    resp = requests.post(GEMINI_URL, headers=headers, json=body, timeout=90)
+    headers = {"Content-Type": "application/json"}
+    full_url = GEMINI_URL + "?key=" + GEMINI_API_KEY
+    resp = requests.post(full_url, headers=headers, json=body, timeout=90)
     send_msg(cid, f"🔍 DEBUG: Gemini HTTP = {resp.status_code}")
     if resp.status_code != 200:
         send_msg(cid, f"🔍 Gemini cevap: {resp.text[:300]}")
