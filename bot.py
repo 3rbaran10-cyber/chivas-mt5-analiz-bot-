@@ -22,6 +22,8 @@ def run_health_server():
     port = int(os.environ.get("PORT", 10000))
     HTTPServer(("0.0.0.0", port), Health).serve_forever()
 
+user_charts = {}
+
 PROMPT = """Sen dünyanın en iyi sentetik endeks trader'ısın. Deriv'in Crash ve Boom endekslerinde uzmanlaşmış, 15+ yıllık deneyimli profesyonelsin.
 
 Sana TEK bir görselde 3 grafik gönderiliyor. Görsel YUKARIDAN AŞAĞIYA şu sırayla:
@@ -36,7 +38,6 @@ GÖREV: H1 + M30 grafiklerini analiz edip, M1 grafiği için KESİN yön sinyali
 ÇOK ÖNEMLİ KURAL:
 - Eğer analizin sonucunda güven oranın %65'in ALTINDA ise, "yon" alanına MUTLAKA "BEKLE" yaz.
 - %65 ve üzeri güvende LONG veya SHORT sinyali ver.
-- Bu, kullanıcının kesin kuralıdır.
 
 KULLANMAN GEREKEN TÜM TEKNİKLER:
 - Çoklu zaman dilimi konfluens (MTF)
@@ -54,13 +55,6 @@ KULLANMAN GEREKEN TÜM TEKNİKLER:
 - CRASH/BOOM ÖZEL DAVRANIŞLARI:
   * Crash X: her X tick'te bir ani AŞAĞI spike → genelde SHORT
   * Boom X: her X tick'te bir ani YUKARI spike → genelde LONG
-  * Crash 300: 300 tick'te bir aşağı spike
-  * Crash 600: 600 tick'te bir aşağı spike
-  * Crash 900: 900 tick'te bir aşağı spike
-  * Crash 1000: 1000 tick'te bir aşağı spike
-  * Boom 600: 600 tick'te bir yukarı spike
-  * Boom 900: 900 tick'te bir yukarı spike
-  * Boom 1000: 1000 tick'te bir yukarı spike
 
 SADECE şu JSON formatında cevap ver, başka hiçbir şey yazma:
 
@@ -87,7 +81,7 @@ SADECE şu JSON formatında cevap ver, başka hiçbir şey yazma:
 
 KURALLAR:
 - yon: SADECE "LONG", "SHORT" veya "BEKLE"
-- guven: 0-100 arası tam sayı. %65 altındaysa yon MUTLAKA "BEKLE" olmalı
+- guven: 0-100 arası tam sayı
 - yol_puani: 8-10 nokta, 0=en alt, 100=en üst
 - Türkçe yaz."""
 
@@ -114,9 +108,12 @@ def get_file_url(file_id):
                      params={"file_id": file_id}, timeout=20).json()
     return f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/{r['result']['file_path']}"
 
-def analyze_chart(img_url, sembol, cid):
+def get_file_bytes(file_id):
+    url = get_file_url(file_id)
+    return requests.get(url, timeout=30).content
+
+def analyze_chart(img_bytes, sembol, cid):
     send_msg(cid, f"🔍 DEBUG: {sembol} analiz ediliyor...")
-    img_bytes = requests.get(img_url, timeout=30).content
     img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
     img.thumbnail((1400, 1400))
     buf = io.BytesIO()
@@ -162,7 +159,29 @@ def analyze_chart(img_url, sembol, cid):
         g = 0
     if g < 65:
         a["yon"] = "BEKLE"
-    return a, img_bytes
+    return a
+
+def merge_3_images(img_bytes_list):
+    imgs = []
+    for b in img_bytes_list:
+        im = Image.open(io.BytesIO(b)).convert("RGB")
+        im.thumbnail((900, 900))
+        imgs.append(im)
+    W = max(im.size[0] for im in imgs)
+    H = sum(im.size[1] for im in imgs)
+    combined = Image.new("RGB", (W, H), (0, 0, 0))
+    y = 0
+    for im in imgs:
+        combined.paste(im, (0, y))
+        y += im.size[1]
+    combined.thumbnail((1400, 1400))
+    buf = io.BytesIO()
+    combined.save(buf, format="JPEG", quality=70)
+    result = buf.getvalue()
+    del combined
+    del buf
+    del imgs
+    return result
 
 def draw_path(img_bytes, yon, puanlar):
     img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
@@ -256,35 +275,61 @@ def main():
 
                 if "photo" in msg:
                     caption = (msg.get("caption") or "").strip()
-                    if not caption:
-                        send_msg(cid, "⚠️ Fotoğrafa *caption* (açıklama) eklemen lazım.\n\nÖrnek: `Crash 300 Index`\n\nSonra gönder.")
-                        continue
-                    sembol = caption
                     fid = msg["photo"][-1]["file_id"]
-                    img_url = get_file_url(fid)
-                    send_msg(cid, f"⏳ {sembol} analiz ediliyor... (30-60 sn)")
-                    try:
-                        a, img_bytes = analyze_chart(img_url, sembol, cid)
-                        kart = build_card(a)
-                        if a.get("yon") != "BEKLE":
-                            gorsel = draw_path(img_bytes, a.get("yon"), a.get("yol_puani", []))
-                        else:
-                            gorsel = None
-                        if gorsel:
-                            send_photo(cid, gorsel, caption=kart)
-                        else:
-                            send_msg(cid, kart)
-                    except Exception as e:
-                        send_msg(cid, f"❌ Analiz hatası: {e}")
+                    img_bytes = get_file_bytes(fid)
+
+                    if cid not in user_charts:
+                        user_charts[cid] = {"step": 0, "imgs": [], "sembol": None}
+
+                    if caption:
+                        user_charts[cid]["sembol"] = caption
+
+                    step = user_charts[cid]["step"]
+                    sirali = ["H1", "M30", "M1"]
+
+                    if step >= 3:
+                        user_charts[cid] = {"step": 0, "imgs": [], "sembol": None}
+                        step = 0
+
+                    tf = sirali[step]
+                    user_charts[cid]["imgs"].append(img_bytes)
+                    user_charts[cid]["step"] += 1
+                    kalan = 3 - user_charts[cid]["step"]
+
+                    if kalan > 0:
+                        sembol_txt = f" ({user_charts[cid]['sembol']})" if user_charts[cid]["sembol"] else ""
+                        send_msg(cid, f"✅ {tf}{sembol_txt} alındı.\n➡️ Sıradaki: *{sirali[step+1]}* ({kalan} grafik kaldı)")
+                    else:
+                        sembol = user_charts[cid]["sembol"]
+                        if not sembol:
+                            send_msg(cid, "⚠️ İlk fotoğrafta *caption* olarak sembol adını yazmalıydın. Sıfırlanıyor, tekrar dene.\n\nÖrnek: `Crash 600 Index`")
+                            user_charts[cid] = {"step": 0, "imgs": [], "sembol": None}
+                            continue
+                        send_msg(cid, f"⏳ {sembol} analiz ediliyor... (30-60 sn)")
+                        try:
+                            merged = merge_3_images(user_charts[cid]["imgs"])
+                            a = analyze_chart(merged, sembol, cid)
+                            kart = build_card(a)
+                            if a.get("yon") != "BEKLE":
+                                gorsel = draw_path(merged, a.get("yon"), a.get("yol_puani", []))
+                            else:
+                                gorsel = None
+                            if gorsel:
+                                send_photo(cid, gorsel, caption=kart)
+                            else:
+                                send_msg(cid, kart)
+                        except Exception as e:
+                            send_msg(cid, f"❌ Analiz hatası: {e}")
+                        user_charts[cid] = {"step": 0, "imgs": [], "sembol": None}
                 else:
                     send_msg(cid,
                         "📸 *MT5 Crash/Boom Analiz Botu*\n\n"
-                        "Kullanım:\n"
-                        "1️⃣ H1 + M30 + M1 grafiklerini TEK görselde birleştir (yukarıdan aşağı)\n"
-                        "2️⃣ Fotoğrafa *açıklama* olarak sembol adını yaz (örn: `Crash 300 Index`)\n"
-                        "3️⃣ Gönder\n\n"
-                        "Bot sana M1 için SHORT/LONG/BEKLE sinyali verecek.\n\n"
-                        "⚠️ Güven %65 altındaysa bot otomatik BEKLE der.")
+                        "Kullanım (3 fotoğrafı TEK TEK gönder):\n\n"
+                        "1️⃣ *H1* grafiğini gönder → caption: `Crash 600 Index`\n"
+                        "2️⃣ *M30* grafiğini gönder (caption gerekmez)\n"
+                        "3️⃣ *M1* grafiğini gönder (caption gerekmez)\n\n"
+                        "Bot 3 grafiği birleştirip M1 için SHORT/LONG/BEKLE sinyali verecek.\n\n"
+                        "⚠️ Albüm (3'lü) olarak DEĞİL, TEK TEK gönder!")
         except Exception as e:
             print(f"=== LOOP HATASI: {e} ===", flush=True)
             time.sleep(3)
