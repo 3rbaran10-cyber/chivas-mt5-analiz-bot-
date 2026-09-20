@@ -104,12 +104,15 @@ def analyze_4_charts(imgs):
     parts = [{"text": PROMPT}]
     for tf in ["M15", "M30", "H1", "M1"]:
         img_small = Image.open(io.BytesIO(imgs[tf])).convert("RGB")
-        img_small.thumbnail((900, 900))
+        img_small.thumbnail((600, 600))
         buf = io.BytesIO()
-        img_small.save(buf, format="JPEG", quality=75)
+        img_small.save(buf, format="JPEG", quality=60)
         b64 = base64.b64encode(buf.getvalue()).decode()
+        del img_small
+        del buf
         parts.append({"text": f"--- {tf} grafiği ---"})
         parts.append({"inline_data": {"mime_type": "image/jpeg", "data": b64}})
+        del b64
     body = {"contents": [{"parts": parts}]}
     headers = {"Content-Type": "application/json", "x-goog-api-key": GEMINI_API_KEY}
     resp = requests.post(GEMINI_URL, headers=headers, json=body, timeout=90)
