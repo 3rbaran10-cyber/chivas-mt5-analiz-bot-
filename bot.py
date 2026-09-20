@@ -5,9 +5,10 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import threading
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 
-GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
+GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
+GROQ_MODEL = "llama-3.2-90b-vision-preview"
 
 class Health(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -26,39 +27,25 @@ user_charts = {}
 PROMPT = """Sen dünyanın en iyi sentetik endeks trader'ısın. Deriv'in Volatility, Crash, Boom, GainX, PainX, SwitchX, TrendX, MAX GainX endekslerinde uzmanlaşmış, 10+ yıllık deneyimli profesyonelsin.
 
 Sana 4 grafik gönderiliyor:
-1. M15 (15 dakikalık) - ana trend
-2. M30 (30 dakikalık) - orta trend
-3. H1 (1 saatlik) - büyük trend
-4. M1 (1 dakikalık) - giriş zamanlaması
+1. M15 - ana trend
+2. M30 - orta trend
+3. H1 - büyük trend
+4. M1 - giriş zamanlaması
 
 GÖREV: M15 + M30 + H1 grafiklerini analiz edip, M1 grafiği için giriş sinyali üret.
 
 KULLANMAN GEREKEN TEKNİKLER:
 - Çoklu zaman dilimi konfluens (MTF)
 - Market yapısı (HH/LL, BOS, CHoCH)
-- Destek/direnç seviyeleri
-- Trend çizgileri ve kanallar
-- EMA 20/50/200
-- RSI divergence
-- MACD cross
-- Bollinger Band squeeze/expansion
-- Fibonacci retracement
-- Mum formasyonları
-- Grafik formasyonları
-- SENTETİK ENDEKS ÖZEL DAVRANIŞLARI:
-  * Crash 1000: ~1000 tick'te bir aşağı spike
-  * Boom 1000: ~1000 tick'te bir yukarı spike
-  * Volatility 100/999: saf rastgele, mean reversion
-  * GainX: yavaş yükseliş + ara sıra sıçrama
-  * PainX: yavaş düşüş + ara sıra sıçrama
-  * SwitchX: her sıçramada yön değişir
-  * TrendX: sıçramada yeni trend
-  * MAX GainX: büyüyen sıçrama boyutu
+- Destek/direnç, trend çizgileri
+- EMA 20/50/200, RSI, MACD, Bollinger
+- Fibonacci, mum formasyonları, grafik formasyonları
+- Sentetik endeks özel davranışları (Crash/Boom spike, Volatility rastgele, GainX/PainX trend, SwitchX yön değişimi, TrendX yeni trend)
 
-SADECE şu JSON formatında cevap ver:
+SADECE şu JSON formatında cevap ver, başka hiçbir şey yazma:
 
 {
-  "sembol": "Volatility 100",
+  "sembol": "GainX 999",
   "yon": "SHORT",
   "guven": 78,
   "giris": "91700.45",
@@ -70,19 +57,16 @@ SADECE şu JSON formatında cevap ver:
   "trend_h1": "yatay",
   "destekler": ["91680.00", "91650.00"],
   "direncler": ["91725.00", "91750.00"],
-  "formasyonlar": ["bearish engulfing", "üçgen kırılımı"],
-  "kullanilan_teknikler": ["MTF konfluens", "RSI divergence", "destek kırılımı"],
+  "formasyonlar": ["bearish engulfing"],
+  "kullanilan_teknikler": ["MTF konfluens", "RSI divergence"],
   "kisa_analiz": "2-3 cümle net özet",
   "gerekce": "Madde 1\\nMadde 2\\nMadde 3\\nMadde 4\\nMadde 5",
-  "m1_tahmini": "M1'de sonraki 5-15 dakikada beklenen hareket: ...",
+  "m1_tahmini": "M1'de sonraki 5-15 dakikada beklenen hareket",
   "yol_puani": [50, 45, 40, 35, 30, 25, 20],
   "uyari": "Yatırım tavsiyesi değildir."
 }
 
-KURALLAR:
-- yon: sadece LONG, SHORT veya BEKLE
-- yol_puani: Grafiğin sağ tarafına çizilecek tahmini fiyat yolu. 8-10 nokta.
-- Türkçe, profesyonel, net yaz."""
+yon sadece LONG, SHORT veya BEKLE olabilir. Türkçe yaz."""
 
 
 def send_msg(cid, text):
@@ -110,39 +94,47 @@ def get_file_bytes(file_id):
 
 def analyze_4_charts(imgs, cid):
     send_msg(cid, "🔍 DEBUG: analyze başladı")
-    parts = [{"text": PROMPT}]
+    content = [{"type": "text", "text": PROMPT}]
     for tf in ["M15", "M30", "H1", "M1"]:
         send_msg(cid, f"🔍 DEBUG: {tf} işleniyor")
         img_small = Image.open(io.BytesIO(imgs[tf])).convert("RGB")
-        img_small.thumbnail((600, 600))
+        img_small.thumbnail((800, 800))
         buf = io.BytesIO()
-        img_small.save(buf, format="JPEG", quality=60)
+        img_small.save(buf, format="JPEG", quality=70)
         b64 = base64.b64encode(buf.getvalue()).decode()
         del img_small
         del buf
-        parts.append({"text": f"--- {tf} grafiği ---"})
-        parts.append({"inline_data": {"mime_type": "image/jpeg", "data": b64}})
+        content.append({"type": "text", "text": f"--- {tf} grafiği ---"})
+        content.append({
+            "type": "image_url",
+            "image_url": {"url": f"data:image/jpeg;base64,{b64}"}
+        })
         del b64
-    send_msg(cid, "🔍 DEBUG: Gemini'ye gönderiliyor...")
-    body = {"contents": [{"parts": parts}]}
-    headers = {"Content-Type": "application/json"}
-    full_url = GEMINI_URL + "?key=" + GEMINI_API_KEY
-    resp = requests.post(full_url, headers=headers, json=body, timeout=90)
-    send_msg(cid, f"🔍 DEBUG: Gemini HTTP = {resp.status_code}")
+    send_msg(cid, "🔍 DEBUG: Groq'a gönderiliyor...")
+    body = {
+        "model": GROQ_MODEL,
+        "messages": [{"role": "user", "content": content}],
+        "temperature": 0.3,
+        "max_tokens": 2000
+    }
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {GROQ_API_KEY}"
+    }
+    resp = requests.post(GROQ_URL, headers=headers, json=body, timeout=90)
+    send_msg(cid, f"🔍 DEBUG: Groq HTTP = {resp.status_code}")
     if resp.status_code != 200:
-        send_msg(cid, f"🔍 Gemini cevap: {resp.text[:300]}")
+        send_msg(cid, f"🔍 Groq cevap: {resp.text[:300]}")
         raise Exception(f"HTTP {resp.status_code}")
     r = resp.json()
-    if "candidates" not in r:
-        send_msg(cid, f"🔍 candidates yok: {json.dumps(r, ensure_ascii=False)[:300]}")
-        raise Exception("candidates yok")
-    send_msg(cid, "🔍 DEBUG: Gemini cevap verdi")
-    text = r["candidates"][0]["content"]["parts"][0]["text"].strip()
+    text = r["choices"][0]["message"]["content"].strip()
     if text.startswith("```"):
         text = text.split("```")[1]
         if text.startswith("json"):
             text = text[4:]
-    return json.loads(text.strip())
+    text = text.strip().rstrip("`").strip()
+    send_msg(cid, "🔍 DEBUG: Groq cevap verdi")
+    return json.loads(text)
 
 def draw_path(img_bytes, yon, puanlar):
     img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
@@ -173,17 +165,17 @@ def draw_path(img_bytes, yon, puanlar):
 
 def build_card(a):
     yon_emoji = {"LONG": "🟢", "SHORT": "🔴", "BEKLE": "🟡"}
-    e = yon_emoji.get(a["yon"], "⚪")
+    e = yon_emoji.get(a.get("yon","BEKLE"), "⚪")
     t = []
     t.append("╔══════════════════════════╗")
     t.append(f"║  📊 {a.get('sembol','?')}")
     t.append(f"║  ⏱ M1 SENARYO")
     t.append("╠══════════════════════════╣")
-    t.append(f"║  {e} YÖN: {a['yon']}")
-    t.append(f"║  🎯 GÜVEN: %{a['guven']}")
+    t.append(f"║  {e} YÖN: {a.get('yon','?')}")
+    t.append(f"║  🎯 GÜVEN: %{a.get('guven','?')}")
     t.append("╠══════════════════════════╣")
-    t.append(f"║  💰 GİRİŞ: {a['giris']}")
-    t.append(f"║  🛑 SL:    {a['stop_loss']}")
+    t.append(f"║  💰 GİRİŞ: {a.get('giris','?')}")
+    t.append(f"║  🛑 SL:    {a.get('stop_loss','?')}")
     for i, tp in enumerate(a.get("take_profit", []), 1):
         t.append(f"║  ✅ TP{i}:   {tp}")
     t.append(f"║  ⚖️ R/R:   {a.get('risk_odul','?')}")
@@ -255,7 +247,7 @@ def main():
                         try:
                             a = analyze_4_charts(user_charts[cid]["imgs"], cid)
                             kart = build_card(a)
-                            gorsel = draw_path(user_charts[cid]["imgs"]["M1"], a["yon"], a.get("yol_puani", []))
+                            gorsel = draw_path(user_charts[cid]["imgs"]["M1"], a.get("yon","BEKLE"), a.get("yol_puani", []))
                             if gorsel:
                                 send_photo(cid, gorsel, caption=kart)
                             else:
