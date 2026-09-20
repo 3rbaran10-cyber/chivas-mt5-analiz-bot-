@@ -1,4 +1,3 @@
-
 import os
 import io, json, base64, time, math, requests
 from PIL import Image, ImageDraw
@@ -87,23 +86,33 @@ KURALLAR:
 
 
 def send_msg(cid, text):
-    requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
-                  json={"chat_id": cid, "text": text, "parse_mode": "Markdown"})
+    try:
+        requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+                      json={"chat_id": cid, "text": text, "parse_mode": "Markdown"},
+                      timeout=10)
+    except Exception as e:
+        print(f"send_msg hatası: {e}", flush=True)
 
 def send_photo(cid, photo_bytes, caption=""):
-    requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto",
-                  data={"chat_id": cid, "caption": caption[:1024]},
-                  files={"photo": ("chart.png", photo_bytes)})
+    try:
+        requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto",
+                      data={"chat_id": cid, "caption": caption[:1024]},
+                      files={"photo": ("chart.png", photo_bytes)},
+                      timeout=30)
+    except Exception as e:
+        print(f"send_photo hatası: {e}", flush=True)
 
 def get_file_bytes(file_id):
     r = requests.get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getFile",
-                     params={"file_id": file_id}).json()
+                     params={"file_id": file_id}, timeout=20).json()
     url = f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/{r['result']['file_path']}"
-    return requests.get(url).content
+    return requests.get(url, timeout=30).content
 
-def analyze_4_charts(imgs):
+def analyze_4_charts(imgs, cid):
+    send_msg(cid, "🔍 DEBUG: analyze başladı")
     parts = [{"text": PROMPT}]
     for tf in ["M15", "M30", "H1", "M1"]:
+        send_msg(cid, f"🔍 DEBUG: {tf} işleniyor")
         img_small = Image.open(io.BytesIO(imgs[tf])).convert("RGB")
         img_small.thumbnail((600, 600))
         buf = io.BytesIO()
@@ -114,15 +123,19 @@ def analyze_4_charts(imgs):
         parts.append({"text": f"--- {tf} grafiği ---"})
         parts.append({"inline_data": {"mime_type": "image/jpeg", "data": b64}})
         del b64
+    send_msg(cid, "🔍 DEBUG: Gemini'ye gönderiliyor...")
     body = {"contents": [{"parts": parts}]}
     headers = {"Content-Type": "application/json", "x-goog-api-key": GEMINI_API_KEY}
     resp = requests.post(GEMINI_URL, headers=headers, json=body, timeout=90)
-    try:
-        r = resp.json()
-    except:
-        raise Exception(f"HTTP {resp.status_code}: {resp.text[:300]}")
+    send_msg(cid, f"🔍 DEBUG: Gemini HTTP = {resp.status_code}")
+    if resp.status_code != 200:
+        send_msg(cid, f"🔍 Gemini cevap: {resp.text[:300]}")
+        raise Exception(f"HTTP {resp.status_code}")
+    r = resp.json()
     if "candidates" not in r:
-        raise Exception(f"Gemini: {json.dumps(r, ensure_ascii=False)[:400]}")
+        send_msg(cid, f"🔍 candidates yok: {json.dumps(r, ensure_ascii=False)[:300]}")
+        raise Exception("candidates yok")
+    send_msg(cid, "🔍 DEBUG: Gemini cevap verdi")
     text = r["candidates"][0]["content"]["parts"][0]["text"].strip()
     if text.startswith("```"):
         text = text.split("```")[1]
@@ -204,7 +217,7 @@ def build_card(a):
 
 def main():
     threading.Thread(target=run_health_server, daemon=True).start()
-    print("Bot çalışıyor...")
+    print("=== BOT BAŞLADI ===", flush=True)
     offset = 0
     while True:
         try:
@@ -239,7 +252,7 @@ def main():
                     else:
                         send_msg(cid, "⏳ 4 grafik analiz ediliyor... (30-60 sn)")
                         try:
-                            a = analyze_4_charts(user_charts[cid]["imgs"])
+                            a = analyze_4_charts(user_charts[cid]["imgs"], cid)
                             kart = build_card(a)
                             gorsel = draw_path(user_charts[cid]["imgs"]["M1"], a["yon"], a.get("yol_puani", []))
                             if gorsel:
@@ -259,7 +272,7 @@ def main():
                         "4️⃣ M1 (sonuncu)\n\n"
                         "Bot 4 grafiği birleştirip M1 için yön verecek. 🎯")
         except Exception as e:
-            print("Loop hatası:", e)
+            print(f"=== LOOP HATASI: {e} ===", flush=True)
             time.sleep(3)
 
 if __name__ == "__main__":
