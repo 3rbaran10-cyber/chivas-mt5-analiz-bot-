@@ -8,7 +8,7 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
-GROQ_MODEL = "llama-3.2-11b-vision-preview"
+GROQ_MODEL = "qwen/qwen3.6-27b"
 
 class Health(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -101,8 +101,8 @@ def analyze_4_charts(imgs, cid):
     body = {
         "model": GROQ_MODEL,
         "messages": [{"role": "user", "content": content}],
-        "temperature": 0.3,
-        "max_tokens": 2000
+        "temperature": 1,
+        "max_completion_tokens": 2000
     }
     headers = {
         "Content-Type": "application/json",
