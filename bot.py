@@ -22,40 +22,45 @@ def run_health_server():
     port = int(os.environ.get("PORT", 10000))
     HTTPServer(("0.0.0.0", port), Health).serve_forever()
 
-PROMPT = """Sen dünyanın en iyi sentetik endeks trader'ısın. Deriv'in Volatility, Crash, Boom, GainX, PainX, SwitchX, TrendX, MAX GainX endekslerinde uzmanlaşmış, 15+ yıllık deneyimli profesyonelsin.
+PROMPT = """Sen dünyanın en iyi sentetik endeks trader'ısın. Deriv'in Crash ve Boom endekslerinde uzmanlaşmış, 15+ yıllık deneyimli profesyonelsin.
 
-Sana TEK bir görselde 4 grafik gönderiliyor. Görsel yukarıdan aşağıya şu sırayla:
-1. M15 (15 dakikalık) - ana trend
+Sana TEK bir görselde 3 grafik gönderiliyor. Görsel YUKARIDAN AŞAĞIYA şu sırayla:
+1. H1 (1 saatlik) - büyük trend
 2. M30 (30 dakikalık) - orta trend
-3. H1 (1 saatlik) - büyük trend
-4. M1 (1 dakikalık) - giriş zamanlaması
+3. M1 (1 dakikalık) - giriş zamanlaması
 
 KULLANICI SEMBOL ADINI VERDİ: {sembol}
 
-GÖREV: M15 + M30 + H1 grafiklerini analiz edip, M1 grafiği için KESİN yön sinyali üret: LONG mu SHORT mu BEKLE mi?
+GÖREV: H1 + M30 grafiklerini analiz edip, M1 grafiği için KESİN yön sinyali üret.
+
+ÇOK ÖNEMLİ KURAL:
+- Eğer analizin sonucunda güven oranın %65'in ALTINDA ise, "yon" alanına MUTLAKA "BEKLE" yaz.
+- %65 ve üzeri güvende LONG veya SHORT sinyali ver.
+- Bu, kullanıcının kesin kuralıdır.
 
 KULLANMAN GEREKEN TÜM TEKNİKLER:
 - Çoklu zaman dilimi konfluens (MTF)
-- Market yapısı: HH/LL, BOS (Break of Structure), CHoCH (Change of Character)
+- Market yapısı: HH/LL, BOS, CHoCH
 - Destek/direnç seviyeleri
 - Trend çizgileri, kanallar, wedge
-- EMA 20/50/200 (görünüyorsa)
-- RSI divergence (bullish/bearish)
+- EMA 20/50/200
+- RSI divergence
 - MACD cross ve histogram
 - Bollinger Band squeeze/expansion
-- Fibonacci retracement (%38.2, %50, %61.8)
-- Mum formasyonları (engulfing, pin bar, doji, hammer, shooting star)
-- Grafik formasyonları (üçgen, flama, OBO, çift tepe/dip, kama)
-- Hacim analizi (varsa)
-- SENTETİK ENDEKS ÖZEL DAVRANIŞLARI:
-  * Crash 500/1000: ~N tick'te bir ani aşağı spike
-  * Boom 500/1000: ~N tick'te bir ani yukarı spike
-  * Volatility 100/999: saf rastgele, mean reversion
-  * GainX: yavaş yükseliş + ara sıra sıçrama
-  * PainX: yavaş düşüş + ara sıra sıçrama
-  * SwitchX: her sıçramada yön değişir
-  * TrendX: sıçramada yeni trend
-  * MAX GainX: büyüyen sıçrama boyutu
+- Fibonacci retracement
+- Mum formasyonları (engulfing, pin bar, doji, hammer)
+- Grafik formasyonları (üçgen, flama, OBO, çift tepe/dip)
+- Hacim analizi
+- CRASH/BOOM ÖZEL DAVRANIŞLARI:
+  * Crash X: her X tick'te bir ani AŞAĞI spike → genelde SHORT
+  * Boom X: her X tick'te bir ani YUKARI spike → genelde LONG
+  * Crash 300: 300 tick'te bir aşağı spike
+  * Crash 600: 600 tick'te bir aşağı spike
+  * Crash 900: 900 tick'te bir aşağı spike
+  * Crash 1000: 1000 tick'te bir aşağı spike
+  * Boom 600: 600 tick'te bir yukarı spike
+  * Boom 900: 900 tick'te bir yukarı spike
+  * Boom 1000: 1000 tick'te bir yukarı spike
 
 SADECE şu JSON formatında cevap ver, başka hiçbir şey yazma:
 
@@ -67,13 +72,12 @@ SADECE şu JSON formatında cevap ver, başka hiçbir şey yazma:
   "stop_loss": "91725.00",
   "take_profit": ["91680.00", "91650.00"],
   "risk_odul": "1:2.5",
-  "trend_m15": "düşüş",
+  "trend_h1": "düşüş",
   "trend_m30": "düşüş",
-  "trend_h1": "yatay",
   "destekler": ["91680.00", "91650.00"],
   "direncler": ["91725.00", "91750.00"],
-  "formasyonlar": ["bearish engulfing", "üçgen kırılımı"],
-  "kullanilan_teknikler": ["MTF konfluens", "RSI divergence", "destek kırılımı"],
+  "formasyonlar": ["bearish engulfing"],
+  "kullanilan_teknikler": ["MTF konfluens", "RSI divergence"],
   "kisa_analiz": "2-3 cümle net özet",
   "gerekce": "Madde 1\\nMadde 2\\nMadde 3\\nMadde 4\\nMadde 5",
   "m1_tahmini": "M1'de sonraki 5-15 dakikada beklenen hareket",
@@ -82,9 +86,10 @@ SADECE şu JSON formatında cevap ver, başka hiçbir şey yazma:
 }}
 
 KURALLAR:
-- yon: sadece LONG, SHORT veya BEKLE
-- yol_puani: Grafiğin sağ tarafına çizilecek tahmini fiyat yolu. 8-10 nokta. 0=en alt, 100=en üst
-- Türkçe, profesyonel, net yaz."""
+- yon: SADECE "LONG", "SHORT" veya "BEKLE"
+- guven: 0-100 arası tam sayı. %65 altındaysa yon MUTLAKA "BEKLE" olmalı
+- yol_puani: 8-10 nokta, 0=en alt, 100=en üst
+- Türkçe yaz."""
 
 
 def send_msg(cid, text):
@@ -111,7 +116,6 @@ def get_file_url(file_id):
 
 def analyze_chart(img_url, sembol, cid):
     send_msg(cid, f"🔍 DEBUG: {sembol} analiz ediliyor...")
-    # Görseli base64'e çevir
     img_bytes = requests.get(img_url, timeout=30).content
     img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
     img.thumbnail((1400, 1400))
@@ -120,7 +124,6 @@ def analyze_chart(img_url, sembol, cid):
     b64 = base64.b64encode(buf.getvalue()).decode()
     del img
     del buf
-    del img_bytes
 
     prompt_full = PROMPT.format(sembol=sembol)
     content = [
@@ -152,7 +155,14 @@ def analyze_chart(img_url, sembol, cid):
             text = text[4:]
     text = text.strip().rstrip("`").strip()
     send_msg(cid, "🔍 DEBUG: Groq cevap verdi")
-    return json.loads(text), img_bytes
+    a = json.loads(text)
+    try:
+        g = int(a.get("guven", 0))
+    except:
+        g = 0
+    if g < 65:
+        a["yon"] = "BEKLE"
+    return a, img_bytes
 
 def draw_path(img_bytes, yon, puanlar):
     img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
@@ -192,17 +202,20 @@ def build_card(a):
     t.append(f"║  {e} YÖN: {a.get('yon','?')}")
     t.append(f"║  🎯 GÜVEN: %{a.get('guven','?')}")
     t.append("╠══════════════════════════╣")
-    t.append(f"║  💰 GİRİŞ: {a.get('giris','?')}")
-    t.append(f"║  🛑 SL:    {a.get('stop_loss','?')}")
-    for i, tp in enumerate(a.get("take_profit", []), 1):
-        t.append(f"║  ✅ TP{i}:   {tp}")
-    t.append(f"║  ⚖️ R/R:   {a.get('risk_odul','?')}")
+    if a.get("yon") != "BEKLE":
+        t.append(f"║  💰 GİRİŞ: {a.get('giris','?')}")
+        t.append(f"║  🛑 SL:    {a.get('stop_loss','?')}")
+        for i, tp in enumerate(a.get("take_profit", []), 1):
+            t.append(f"║  ✅ TP{i}:   {tp}")
+        t.append(f"║  ⚖️ R/R:   {a.get('risk_odul','?')}")
+    else:
+        t.append("║  ⏸️  Şu an net sinyal yok")
+        t.append("║  ⏳ Güven %65 altı, bekle")
     t.append("╚══════════════════════════╝")
     t.append("")
     t.append("📈 TREND ANALİZİ")
-    t.append(f"• M15: {a.get('trend_m15','?')}")
-    t.append(f"• M30: {a.get('trend_m30','?')}")
     t.append(f"• H1:  {a.get('trend_h1','?')}")
+    t.append(f"• M30: {a.get('trend_m30','?')}")
     t.append("")
     t.append("🎯 SEVİYELER")
     t.append(f"🟢 Destek: {', '.join(a.get('destekler',[]))}")
@@ -244,7 +257,7 @@ def main():
                 if "photo" in msg:
                     caption = (msg.get("caption") or "").strip()
                     if not caption:
-                        send_msg(cid, "⚠️ Fotoğrafa *caption* (açıklama) eklemen lazım.\n\nÖrnek: `GainX 1200`\n\nSonra gönder.")
+                        send_msg(cid, "⚠️ Fotoğrafa *caption* (açıklama) eklemen lazım.\n\nÖrnek: `Crash 300 Index`\n\nSonra gönder.")
                         continue
                     sembol = caption
                     fid = msg["photo"][-1]["file_id"]
@@ -253,7 +266,10 @@ def main():
                     try:
                         a, img_bytes = analyze_chart(img_url, sembol, cid)
                         kart = build_card(a)
-                        gorsel = draw_path(img_bytes, a.get("yon","BEKLE"), a.get("yol_puani", []))
+                        if a.get("yon") != "BEKLE":
+                            gorsel = draw_path(img_bytes, a.get("yon"), a.get("yol_puani", []))
+                        else:
+                            gorsel = None
                         if gorsel:
                             send_photo(cid, gorsel, caption=kart)
                         else:
@@ -262,12 +278,13 @@ def main():
                         send_msg(cid, f"❌ Analiz hatası: {e}")
                 else:
                     send_msg(cid,
-                        "📸 *MT5 Sentetik Endeks Analiz Botu*\n\n"
+                        "📸 *MT5 Crash/Boom Analiz Botu*\n\n"
                         "Kullanım:\n"
-                        "1️⃣ 4 zaman dilimini (M15+M30+H1+M1) TEK görselde birleştir\n"
-                        "2️⃣ Fotoğrafa *açıklama* olarak sembol adını yaz (örn: `GainX 1200`)\n"
+                        "1️⃣ H1 + M30 + M1 grafiklerini TEK görselde birleştir (yukarıdan aşağı)\n"
+                        "2️⃣ Fotoğrafa *açıklama* olarak sembol adını yaz (örn: `Crash 300 Index`)\n"
                         "3️⃣ Gönder\n\n"
-                        "Bot sana M1 için SHORT/LONG/BEKLE sinyali verecek. 🎯")
+                        "Bot sana M1 için SHORT/LONG/BEKLE sinyali verecek.\n\n"
+                        "⚠️ Güven %65 altındaysa bot otomatik BEKLE der.")
         except Exception as e:
             print(f"=== LOOP HATASI: {e} ===", flush=True)
             time.sleep(3)
