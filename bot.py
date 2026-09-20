@@ -26,13 +26,21 @@ user_charts = {}
 
 PROMPT = """Sen dünyanın en iyi sentetik endeks trader'ısın. Deriv'in Volatility, Crash, Boom, GainX, PainX, SwitchX, TrendX, MAX GainX endekslerinde uzmanlaşmış, 10+ yıllık deneyimli profesyonelsin.
 
-Sana 4 grafik gönderiliyor:
-1. M15 - ana trend
-2. M30 - orta trend
-3. H1 - büyük trend
-4. M1 - giriş zamanlaması
+Sana TEK bir görselde 4 grafik gönderiliyor. Görsel YUKARIDAN AŞAĞIYA şu sırayla:
+1. M15 (15 dakikalık) - ana trend
+2. M30 (30 dakikalık) - orta trend
+3. H1 (1 saatlik) - büyük trend
+4. M1 (1 dakikalık) - giriş zamanlaması
 
 GÖREV: M15 + M30 + H1 grafiklerini analiz edip, M1 grafiği için giriş sinyali üret.
+
+KULLANMAN GEREKEN TEKNİKLER:
+- Çoklu zaman dilimi konfluens (MTF)
+- Market yapısı (HH/LL, BOS, CHoCH)
+- Destek/direnç, trend çizgileri
+- EMA 20/50/200, RSI, MACD, Bollinger
+- Fibonacci, mum formasyonları
+- Sentetik endeks davranışları (Crash/Boom spike, Volatility rastgele, GainX/PainX trend, SwitchX yön değişimi)
 
 SADECE şu JSON formatında cevap ver, başka hiçbir şey yazma:
 
@@ -89,14 +97,33 @@ def get_file_bytes(file_id):
 
 def analyze_4_charts(imgs, cid):
     send_msg(cid, "🔍 DEBUG: analyze başladı")
-    content = [{"type": "text", "text": PROMPT}]
+    send_msg(cid, "🔍 DEBUG: 4 grafik tek görselde birleştiriliyor")
+    pil_imgs = []
     for tf in ["M15", "M30", "H1", "M1"]:
-        send_msg(cid, f"🔍 DEBUG: {tf} işleniyor")
-        content.append({"type": "text", "text": f"--- {tf} grafiği ---"})
-        content.append({
-            "type": "image_url",
-            "image_url": {"url": imgs[tf]}
-        })
+        b = requests.get(imgs[tf], timeout=30).content
+        im = Image.open(io.BytesIO(b)).convert("RGB")
+        im.thumbnail((700, 700))
+        pil_imgs.append(im)
+    W = max(im.size[0] for im in pil_imgs)
+    H = sum(im.size[1] for im in pil_imgs)
+    combined = Image.new("RGB", (W, H), (0, 0, 0))
+    y = 0
+    for im in pil_imgs:
+        combined.paste(im, (0, y))
+        y += im.size[1]
+    combined.thumbnail((1400, 1400))
+    buf = io.BytesIO()
+    combined.save(buf, format="JPEG", quality=65)
+    b64 = base64.b64encode(buf.getvalue()).decode()
+    del combined
+    del buf
+    del pil_imgs
+
+    content = [
+        {"type": "text", "text": PROMPT},
+        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}
+    ]
+    del b64
     send_msg(cid, "🔍 DEBUG: Groq'a gönderiliyor...")
     body = {
         "model": GROQ_MODEL,
