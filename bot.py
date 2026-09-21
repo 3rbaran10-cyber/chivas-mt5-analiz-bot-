@@ -9,8 +9,8 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
-# 404 HATASI İÇİN EN GÜNCEL VE ÜCRETLİ MODEL
-GEMINI_MODEL = "gemini-3.8-flash"
+# GERÇEK VE GÜNCEL MODEL (404 HATASI İÇİN DÜZELTİLDİ)
+GEMINI_MODEL = "gemini-1.5-flash"
 GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
 
 # ==========================================
@@ -29,12 +29,12 @@ def run_health_server():
     HTTPServer(("0.0.0.0", port), Health).serve_forever()
 
 # ==========================================
-# XAU/USD M1 PROMPT
+# YENİ NESİL XAU/USD M1 PROMPT (LONG/SHORT YOK, TAHMİN VAR)
 # ==========================================
-PROMPT = """Sen dünyanın en iyi XAU/USD (Altın) M1 scalping uzmanısın. 15+ yıllık deneyimli bir profesyonelsin.
+PROMPT = """Sen dünyanın en iyi XAU/USD (Altın) M1 analiz uzmanısın. 15+ yıllık deneyimli bir profesyonelsin.
 
 Sana TEK bir XAU/USD M1 grafiği gönderiliyor.
-GÖREV: Bu grafiği analiz et ve sonraki 2 dakikalık (2 mumluk) fiyat projeksiyonunu tahmin et.
+GÖREV: Bu grafiği analiz et ve fiyatın önümüzdeki 2-5 dakikada nereye gitmesini beklediğini tahmin et.
 
 KULLANMAN GEREKEN TÜM TEKNİKLER:
 - Market yapısı: HH/LL, BOS, CHoCH
@@ -44,17 +44,20 @@ KULLANMAN GEREKEN TÜM TEKNİKLER:
 - Fibonacci retracement
 
 ÇOK ÖNEMLİ KURALLAR:
-1. Eğer güven oranın %65'in ALTINDA ise, "yon" alanına MUTLAKA "BEKLE" yaz.
-2. %65 ve üzeri güvende LONG veya SHORT sinyali ver.
-3. KESİNLİKLE örnek JSON'daki değerleri kopyalama, grafiğe göre kendi objektif kararını ver.
+1. Sana verilen grafikte fiyatın nereye gideceğini tahmin etmeye çalış. Sadece "yükseliyor, o zaman yükselecek" veya "düşüyor, o zaman düşecek" deme. Bunu herkes yapabilir.
+2. Fiyatın kritik bir seviyeye (destek/direnç) yaklaşıp yaklaşmadığına bak. Eğer yaklaşıyorsa ve oradan RED yiyorsa (rejection), o yöne bir hareket bekleyebilirsin.
+3. Eğer net bir sinyal yoksa veya piyasa kararsızsa, "yon" alanına MUTLAKA "BEKLE" yaz. Zorla bir yön uydurma.
 4. Güven oranını %50, %65, %75, %85, %95 gibi gerçekçi ve değişken aralıklarda ver. Sürekli aynı sayıyı verme.
+5. KESİNLİKLE örnek JSON'daki değerleri kopyalama, grafiğe göre kendi objektif kararını ver.
+6. Eğer fiyat çok hızlı yükselmişse ve "aşırı alım" (overbought) görünüyorsa, düşüş bekleyebilirsin. Ama bu her zaman doğru değildir, dikkatli ol.
 
 SADECE şu JSON formatında cevap ver, başka hiçbir şey yazma. Örnek değerleri KOPYALAMA:
 
 {
   "sembol": "XAU/USD",
-  "yon": "LONG veya SHORT veya BEKLE",
+  "yon": "YUKARI veya AŞAĞI veya BEKLE",
   "guven": 0-100 arası tam sayı,
+  "beklenen_hareket": "Fiyatın nereye gitmesini bekliyorsun? (örn: 4356'dan 4362'ye yükseliş)",
   "giris": "fiyat",
   "stop_loss": "fiyat",
   "take_profit": ["fiyat1", "fiyat2"],
@@ -71,8 +74,8 @@ SADECE şu JSON formatında cevap ver, başka hiçbir şey yazma. Örnek değerl
 }
 
 KURALLAR:
-- yon: SADECE "LONG", "SHORT" veya "BEKLE"
-- yol_puani: 5-8 nokta, 0=en alt, 100=en üst. (LONG ise yukarı giden, SHORT ise aşağı giden bir yol çiz)
+- yon: SADECE "YUKARI", "AŞAĞI" veya "BEKLE"
+- yol_puani: 5-8 nokta, 0=en alt, 100=en üst. (YUKARI ise yukarı giden, AŞAĞI ise aşağı giden bir yol çiz)
 - Türkçe yaz."""
 
 # ==========================================
@@ -143,7 +146,7 @@ def analyze_chart(img_bytes, cid):
                 r = resp.json()
                 text = r["candidates"][0]["content"]["parts"][0]["text"].strip()
                 
-                # GÜVENLİ JSON TEMİZLEME (Metnin içindeki ilk '{' ve son '}' arasını alır)
+                # GÜVENLİ JSON TEMİZLEME
                 start_idx = text.find('{')
                 end_idx = text.rfind('}')
                 if start_idx != -1 and end_idx != -1:
@@ -186,9 +189,9 @@ def draw_projection(img_bytes, yon, puanlar):
     W, H = img.size
     draw = ImageDraw.Draw(img)
     
-    if yon == "LONG":
+    if yon == "YUKARI":
         renk = (0, 220, 0)
-    elif yon == "SHORT":
+    elif yon == "AŞAĞI":
         renk = (230, 30, 30)
     else:
         return None
@@ -233,7 +236,7 @@ def draw_projection(img_bytes, yon, puanlar):
 # MESAJ KARTI
 # ==========================================
 def build_card(a):
-    yon_emoji = {"LONG": "🟢", "SHORT": "🔴", "BEKLE": "🟡"}
+    yon_emoji = {"YUKARI": "🟢", "AŞAĞI": "🔴", "BEKLE": "🟡"}
     e = yon_emoji.get(a.get("yon","BEKLE"), "⚪")
     t = []
     t.append("╔══════════════════════════╗")
@@ -249,6 +252,8 @@ def build_card(a):
         for i, tp in enumerate(a.get("take_profit", []), 1):
             t.append(f"║  ✅ TP{i}:   {tp}")
         t.append(f"║  ⚖️ R/R:   {a.get('risk_odul','?')}")
+        t.append("╠══════════════════════════╣")
+        t.append(f"║  🔮 BEKLENEN: {a.get('beklenen_hareket','?')[:20]}...")
     else:
         t.append("║  ⏸️  Şu an net sinyal yok")
         t.append("║  ⏳ Güven %65 altı, bekle")
