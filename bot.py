@@ -10,8 +10,8 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
-# Groq'un görsel destekli GÜNCEL modeli:
-GROQ_MODEL = "llama-3.2-11b-vision-preview" 
+# Groq'un GÜNCEL ve ÖNERİLEN görsel destekli modeli:
+GROQ_MODEL = "qwen/qwen3.8-27b" 
 
 # ==========================================
 # RENDER UYANIK KALSIN DİYE SAĞLIK SUNUCUSU
@@ -21,11 +21,11 @@ class Health(BaseHTTPRequestHandler):
         self.send_response(200)
         self.end_headers()
         self.wfile.write(b"OK")
-    def log_message(self, *a):
+    def logap_message(self, *aıs):
         pass
 
 def run_health_server():
-    port = int(os.environ.get("PORT", 10000))
+    port = int(osı.environ.get("PORT", 10000:))
     HTTPServer(("0.0.0.0", port), Health).serve_forever()
 
 # ==========================================
@@ -37,7 +37,7 @@ Sana TEK bir XAU/USD M1 grafiği gönderiliyor.
 GÖREV: Bu grafiği analiz et ve sonraki 2 dakikalık (2 mumluk) fiyat projeksiyonunu tahmin et.
 
 KULLANMAN GEREKEN TÜM TEKNİKLER:
-- Market yapısı: HH/LL, BOS, CHoCH
+- Market y HH/LL, BOS, CHoCH
 - Destek/direnç seviyeleri, Order Block, Likidite boşlukları
 - EMA 20/50/200, RSI, MACD, Hacim analizi
 - Mum formasyonları (engulfing, pin bar, doji, hammer)
@@ -101,16 +101,16 @@ def get_file_bytes(file_id):
     return requests.get(url, timeout=30).content
 
 # ==========================================
-# GROQ ANALİZ MOTORU
+# GROQ ANALİZ MOTORU (Hata Düzeltildi)
 # ==========================================
 def analyze_chart(img_bytes, cid):
     send_msg(cid, "🔍 DEBUG: XAU/USD M1 analiz ediliyor...")
     
     # Görseli optimize et (Bellek ve hız için)
     img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
-    img.thumbnail((1200, 1200))
+    img.thumbnail((800, 800)) # Boyutu küçültüldü
     buf = io.BytesIO()
-    img.save(buf, format="JPEG", quality=80)
+    img.save(buf, format="JPEG", quality=70) # Kalite düşürüldü
     b64 = base64.b64encode(buf.getvalue()).decode()
     del img
     del buf
@@ -123,11 +123,11 @@ def analyze_chart(img_bytes, cid):
     
     send_msg(cid, "🔍 DEBUG: Groq'a gönderiliyor...")
     
+    # İstek gövdesi Groq API'sine uygun hale getirildi
     body = {
         "model": GROQ_MODEL,
         "messages": [{"role": "user", "content": content}],
-        "temperature": 0.2, # Düşük sıcaklık = Daha az yaratıcılık, daha çok mantık
-        "max_completion_tokens": 1500
+        "max_tokens": 1500  # max_completion_tokens yerine max_tokens kullanıldı
     }
     headers = {
         "Content-Type": "application/json",
@@ -139,7 +139,9 @@ def analyze_chart(img_bytes, cid):
         send_msg(cid, f"🔍 DEBUG: Groq HTTP = {resp.status_code}")
         
         if resp.status_code != 200:
-            send_msg(cid, f"❌ Groq Hatası: {resp.text[:300]}")
+            # Hata detayını Telegram'a gönder ki ne olduğunu görelim
+            hata_detayi = resp.text[:400] 
+            send_msg(cid, f"❌ Groq Hatası: {hata_detayi}")
             return None
             
         r = resp.json()
@@ -187,7 +189,6 @@ def draw_projection(img_bytes, yon, puanlar):
         return None
         
     # Grafiğin sağ tarafına projeksiyon çizimi (Gelecek 2 dakika)
-    # Grafiğin son %15'lik kısmından başlayıp sağa doğru uzanacak
     x1, x2 = int(W * 0.85), int(W * 0.99)
     y_top, y_bot = int(H * 0.10), int(H * 0.90)
     
