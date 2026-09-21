@@ -29,9 +29,9 @@ def run_health_server():
     HTTPServer(("0.0.0.0", port), Health).serve_forever()
 
 # ==========================================
-# XAU/USD M1 PROMPT
+# XAU/USD M1 PROMPT (v2 - VWAP + FVG + Likidite + Hibrit SL/TP)
 # ==========================================
-PROMPT = """Sen dünyanın en iyi XAU/USD (Altın) M1 scalping uzmanısın. 15+ yıllık deneyimli bir profesyonelsin.
+PROMPT = """Sen dünyanın en iyi XAU/USD (Altın) M1 scalping uzmanısın. 15+ yıllık deneyimli bir profesyonelsin. Kurumsal trader'larla çalışmış, Smart Money konseptlerini (ICT) derinlemesine bilen bir analistsin.
 
 Sana TEK bir XAU/USD M1 grafiği gönderiliyor.
 GÖREV: Bu grafiği analiz et ve sonraki 2 dakikalık (2 mumluk) fiyat projeksiyonunu tahmin et.
@@ -39,11 +39,24 @@ GÖREV: Bu grafiği analiz et ve sonraki 2 dakikalık (2 mumluk) fiyat projeksiy
 KULLANMAN GEREKEN TÜM TEKNİKLER:
 - Market yapısı: HH/LL, BOS, CHoCH
 - Destek/direnç seviyeleri, Order Block, Likidite boşlukları
+- Supply/Demand Zones (arz/talep bölgeleri)
+- VWAP (Volume Weighted Average Price) - kurumsal referans çizgisi
+- FVG (Fair Value Gap) - fiyat boşlukları
+- Liquidity Sweep - stop avı tespiti
+- Premium/Discount bölgeler (Fibonacci ile)
 - EMA 20/50/200, RSI, MACD, Hacim analizi
 - Mum formasyonları (engulfing, pin bar, doji, hammer)
 - Fibonacci retracement
 
-ÇOK ÖNEMLİ KURALLAR:
+ÇOK ÖNEMLİ SEVİYE KURALLARI (HİBRİT SİSTEM):
+1. SL seviyesini belirlerken ÖNCE en yakın destek (LONG için) veya direnç (SHORT için) seviyesini bul.
+2. SL'yi bu seviyenin 1-2 puan ÖTESİNE koy (stop avına karşı koruma).
+3. ANCAK minimum SL mesafesi 5 PUAN olmalıdır. Eğer yapı 5 puandan dar SL gerektiriyorsa, 5 puana genişlet.
+4. Minimum TP1 mesafesi 8 PUAN, minimum TP2 mesafesi 12 PUAN olmalıdır.
+5. Spread (0.20-0.50 puan) ve gürültüyü hesaba kat.
+6. Eğer grafiğe göre 5 puanlık SL uygun değilse veya R/R 1:1.5'in altındaysa, "BEKLE" yaz.
+
+DİĞER ÇOK ÖNEMLİ KURALLAR:
 1. Eğer güven oranın %65'in ALTINDA ise, "yon" alanına MUTLAKA "BEKLE" yaz.
 2. %65 ve üzeri güvende LONG veya SHORT sinyali ver.
 3. KESİNLİKLE örnek JSON'daki değerleri kopyalama, grafiğe göre kendi objektif kararını ver.
@@ -62,6 +75,9 @@ SADECE şu JSON formatında cevap ver, başka hiçbir şey yazma. Örnek değerl
   "take_profit": ["fiyat1", "fiyat2"],
   "risk_odul": "1:2.0",
   "trend_m1": "yükseliş veya düşüş veya yatay",
+  "vwap_durumu": "fiyat VWAP üstünde veya altında veya belirsiz",
+  "fvg_tespit": "FVG var mı yok mu, varsa kısa açıklama",
+  "likidite_durumu": "Liquidity sweep tespit edildi mi, kısa açıklama",
   "destekler": ["fiyat1", "fiyat2"],
   "direncler": ["fiyat1", "fiyat2"],
   "formasyonlar": ["formasyon1"],
@@ -354,7 +370,7 @@ def draw_projection(img_bytes, yon, puanlar):
     return buf.getvalue()
 
 # ==========================================
-# MESAJ KARTI (✅ DÜZELTME 5: Boş alan kontrolü)
+# MESAJ KARTI (✅ v2: Yeni alanlar eklendi)
 # ==========================================
 def build_card(a):
     yon_emoji = {"LONG": "🟢", "SHORT": "🔴", "BEKLE": "🟡"}
@@ -383,6 +399,12 @@ def build_card(a):
     t.append("")
     t.append("📈 TREND ANALİZİ")
     t.append(f"• M1:  {a.get('trend_m1','?')}")
+    
+    # ✅ YENİ: VWAP, FVG ve Likidite durumu
+    vwap = a.get("vwap_durumu", "")
+    if vwap and vwap.lower() != "belirsiz":
+        t.append(f"• VWAP: {escape_md(vwap)}")
+    
     t.append("")
     t.append("🎯 SEVİYELER")
     
@@ -390,6 +412,21 @@ def build_card(a):
     direncler = a.get("direncler", [])
     t.append(f"🟢 Destek: {', '.join(map(str, destekler)) if destekler else 'Belirsiz'}")
     t.append(f"🔴 Direnç: {', '.join(map(str, direncler)) if direncler else 'Belirsiz'}")
+    
+    # ✅ YENİ: Smart Money göstergeleri
+    fvg = a.get("fvg_tespit", "")
+    likidite = a.get("likidite_durumu", "")
+    sm_list = []
+    if fvg and fvg.lower() not in ["yok", "belirsiz", ""]:
+        sm_list.append(f"📦 FVG: {escape_md(fvg)}")
+    if likidite and likidite.lower() not in ["yok", "belirsiz", ""]:
+        sm_list.append(f"💧 Likidite: {escape_md(likidite)}")
+    
+    if sm_list:
+        t.append("")
+        t.append("🧠 SMART MONEY")
+        for s in sm_list:
+            t.append(s)
     
     formasyonlar = a.get("formasyonlar", [])
     if formasyonlar:
@@ -426,7 +463,7 @@ def main():
                              
             for u in r.get("result", []):
                 offset = u["update_id"] + 1
-                save_offset(offset)  # ✅ Her update'te offset kaydedilir
+                save_offset(offset)
                 
                 msg = u.get("message", {})
                 cid = msg.get("chat", {}).get("id")
@@ -434,7 +471,6 @@ def main():
                     continue
 
                 if "photo" in msg:
-                    # ✅ Rate limiting
                     if not check_rate_limit(cid):
                         continue
                     
@@ -460,7 +496,6 @@ def main():
                                 gorsel = None
                                 
                             if gorsel:
-                                # ✅ Caption 1024'ü aşarsa fotoğraf + ayrı mesaj
                                 if len(kart) > 1024:
                                     send_photo(cid, gorsel, caption=f"XAU/USD M1 | {a.get('yon')} | %{a.get('guven')}")
                                     send_msg(cid, kart)
@@ -475,13 +510,13 @@ def main():
                         send_msg(cid, f"❌ Beklenmeyen Hata: {str(e)}", parse_mode=None)
                 else:
                     send_msg(cid,
-                        "📸 *XAU/USD M1 Analiz Botu (PRO)*\n\n"
+                        "📸 *XAU/USD M1 Analiz Botu (PRO v2)*\n\n"
                         "Kullanım:\n"
                         "1️⃣ MT5'ten XAU/USD M1 grafiğinin ekran görüntüsünü al.\n"
                         "2️⃣ Bu fotoğrafı bota gönder.\n"
                         "3️⃣ Altına (caption) `XAU/USD` yaz.\n\n"
-                        "Bot senin için en iyi teknikleri kullanarak analiz edecek, "
-                        "giriş/SL/TP seviyelerini verecek ve 2 dakika sonraki tahmini grafiği çizecektir.\n\n"
+                        "Bot artık VWAP, FVG ve Likidite analizini de kullanıyor. "
+                        "Hibrit SL/TP sistemi ile minimum 5 puan SL koruması aktif.\n\n"
                         "⚠️ Yatırım tavsiyesi değildir.",
                         parse_mode="Markdown")
                         
