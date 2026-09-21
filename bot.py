@@ -9,8 +9,8 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
-# GERÇEK VE GÜNCEL MODEL (404 HATASI İÇİN DÜZELTİLDİ)
-GEMINI_MODEL = "gemini-1.5-flash"
+# GÜNCEL VE GEÇERLİ MODEL (404 HATASI İÇİN DÜZELTİLDİ)
+GEMINI_MODEL = "gemini-3.8-flash-001"
 GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
 
 # ==========================================
@@ -29,12 +29,12 @@ def run_health_server():
     HTTPServer(("0.0.0.0", port), Health).serve_forever()
 
 # ==========================================
-# YENİ NESİL XAU/USD M1 PROMPT (LONG/SHORT YOK, TAHMİN VAR)
+# XAU/USD M1 PROMPT (TÜM TEKNİKLER + NET SİNYAL)
 # ==========================================
-PROMPT = """Sen dünyanın en iyi XAU/USD (Altın) M1 analiz uzmanısın. 15+ yıllık deneyimli bir profesyonelsin.
+PROMPT = """Sen dünyanın en iyi XAU/USD (Altın) M1 scalping uzmanısın. 15+ yıllık deneyimli bir profesyonelsin.
 
 Sana TEK bir XAU/USD M1 grafiği gönderiliyor.
-GÖREV: Bu grafiği analiz et ve fiyatın önümüzdeki 2-5 dakikada nereye gitmesini beklediğini tahmin et.
+GÖREV: Bu grafiği analiz et ve sonraki 2 dakikalık (2 mumluk) fiyat projeksiyonunu tahmin et.
 
 KULLANMAN GEREKEN TÜM TEKNİKLER:
 - Market yapısı: HH/LL, BOS, CHoCH
@@ -44,20 +44,18 @@ KULLANMAN GEREKEN TÜM TEKNİKLER:
 - Fibonacci retracement
 
 ÇOK ÖNEMLİ KURALLAR:
-1. Sana verilen grafikte fiyatın nereye gideceğini tahmin etmeye çalış. Sadece "yükseliyor, o zaman yükselecek" veya "düşüyor, o zaman düşecek" deme. Bunu herkes yapabilir.
-2. Fiyatın kritik bir seviyeye (destek/direnç) yaklaşıp yaklaşmadığına bak. Eğer yaklaşıyorsa ve oradan RED yiyorsa (rejection), o yöne bir hareket bekleyebilirsin.
-3. Eğer net bir sinyal yoksa veya piyasa kararsızsa, "yon" alanına MUTLAKA "BEKLE" yaz. Zorla bir yön uydurma.
+1. Eğer güven oranın %65'in ALTINDA ise, "yon" alanına MUTLAKA "BEKLE" yaz.
+2. %65 ve üzeri güvende LONG veya SHORT sinyali ver.
+3. KESİNLİKLE örnek JSON'daki değerleri kopyalama, grafiğe göre kendi objektif kararını ver.
 4. Güven oranını %50, %65, %75, %85, %95 gibi gerçekçi ve değişken aralıklarda ver. Sürekli aynı sayıyı verme.
-5. KESİNLİKLE örnek JSON'daki değerleri kopyalama, grafiğe göre kendi objektif kararını ver.
-6. Eğer fiyat çok hızlı yükselmişse ve "aşırı alım" (overbought) görünüyorsa, düşüş bekleyebilirsin. Ama bu her zaman doğru değildir, dikkatli ol.
+5. Trende karşı işlem açma. Fiyat yükseliş trendindeyse sadece LONG, düşüş trendindeyse sadece SHORT sinyali ver.
 
 SADECE şu JSON formatında cevap ver, başka hiçbir şey yazma. Örnek değerleri KOPYALAMA:
 
 {
   "sembol": "XAU/USD",
-  "yon": "YUKARI veya AŞAĞI veya BEKLE",
+  "yon": "LONG veya SHORT veya BEKLE",
   "guven": 0-100 arası tam sayı,
-  "beklenen_hareket": "Fiyatın nereye gitmesini bekliyorsun? (örn: 4356'dan 4362'ye yükseliş)",
   "giris": "fiyat",
   "stop_loss": "fiyat",
   "take_profit": ["fiyat1", "fiyat2"],
@@ -74,8 +72,8 @@ SADECE şu JSON formatında cevap ver, başka hiçbir şey yazma. Örnek değerl
 }
 
 KURALLAR:
-- yon: SADECE "YUKARI", "AŞAĞI" veya "BEKLE"
-- yol_puani: 5-8 nokta, 0=en alt, 100=en üst. (YUKARI ise yukarı giden, AŞAĞI ise aşağı giden bir yol çiz)
+- yon: SADECE "LONG", "SHORT" veya "BEKLE"
+- yol_puani: 5-8 nokta, 0=en alt, 100=en üst. (LONG ise yukarı giden, SHORT ise aşağı giden bir yol çiz)
 - Türkçe yaz."""
 
 # ==========================================
@@ -105,10 +103,10 @@ def get_file_bytes(file_id):
     return requests.get(url, timeout=30).content
 
 # ==========================================
-# GEMINI ANALİZ MOTORU (GÜNCEL MODEL & 4096 TOKEN)
+# GEMINI ANALİZ MOTORU
 # ==========================================
 def analyze_chart(img_bytes, cid):
-    send_msg(cid, "🔍 DEBUG: XAU/USD M1 analiz ediliyor...")
+    send_msg(cid, "🔍 XAU/USD M1 analiz ediliyor...")
     
     img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
     img.thumbnail((800, 800))
@@ -127,26 +125,25 @@ def analyze_chart(img_bytes, cid):
         }],
         "generationConfig": {
             "temperature": 0.2,
-            "maxOutputTokens": 4096,  # JSON kesilmesini önlemek için 4096 yapıldı
+            "maxOutputTokens": 4096,
             "responseMimeType": "application/json"
         }
     }
     del b64
     
-    send_msg(cid, "🔍 DEBUG: Gemini'ye gönderiliyor...")
+    send_msg(cid, "🔍 Gemini'ye gönderiliyor...")
     headers = {"Content-Type": "application/json"}
     
     max_deneme = 3
     for deneme in range(max_deneme):
         try:
             resp = requests.post(GEMINI_URL, headers=headers, json=payload, timeout=90)
-            send_msg(cid, f"🔍 DEBUG: Gemini HTTP = {resp.status_code}")
+            send_msg(cid, f"🔍 Gemini HTTP = {resp.status_code}")
             
             if resp.status_code == 200:
                 r = resp.json()
                 text = r["candidates"][0]["content"]["parts"][0]["text"].strip()
                 
-                # GÜVENLİ JSON TEMİZLEME
                 start_idx = text.find('{')
                 end_idx = text.rfind('}')
                 if start_idx != -1 and end_idx != -1:
@@ -182,16 +179,16 @@ def analyze_chart(img_bytes, cid):
             return None
 
 # ==========================================
-# GÖRSEL PROJEKSİYON ÇİZİMİ (PIL)
+# GÖRSEL PROJEKSİYON ÇİZİMİ
 # ==========================================
 def draw_projection(img_bytes, yon, puanlar):
     img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
     W, H = img.size
     draw = ImageDraw.Draw(img)
     
-    if yon == "YUKARI":
+    if yon == "LONG":
         renk = (0, 220, 0)
-    elif yon == "AŞAĞI":
+    elif yon == "SHORT":
         renk = (230, 30, 30)
     else:
         return None
@@ -233,10 +230,10 @@ def draw_projection(img_bytes, yon, puanlar):
     return buf.getvalue()
 
 # ==========================================
-# MESAJ KARTI
+# MESAJ KARTI (TABLO)
 # ==========================================
 def build_card(a):
-    yon_emoji = {"YUKARI": "🟢", "AŞAĞI": "🔴", "BEKLE": "🟡"}
+    yon_emoji = {"LONG": "🟢", "SHORT": "🔴", "BEKLE": "🟡"}
     e = yon_emoji.get(a.get("yon","BEKLE"), "⚪")
     t = []
     t.append("╔══════════════════════════╗")
@@ -252,8 +249,6 @@ def build_card(a):
         for i, tp in enumerate(a.get("take_profit", []), 1):
             t.append(f"║  ✅ TP{i}:   {tp}")
         t.append(f"║  ⚖️ R/R:   {a.get('risk_odul','?')}")
-        t.append("╠══════════════════════════╣")
-        t.append(f"║  🔮 BEKLENEN: {a.get('beklenen_hareket','?')[:20]}...")
     else:
         t.append("║  ⏸️  Şu an net sinyal yok")
         t.append("║  ⏳ Güven %65 altı, bekle")
