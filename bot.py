@@ -4,32 +4,33 @@ from PIL import Image, ImageDraw, ImageFont
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 # ==========================================
-# AYARLAR (Render'daki Environment Variables)
+# AYARLAR
 # ==========================================
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
-# Groq'un GÜNCEL ve ÖNERİLEN görsel destekli modeli:
-GROQ_MODEL = "qwen/qwen3.8-27b" 
+# Groq'un görsel destekli GÜVENİLİR modeli
+GROQ_MODEL = "llama-3.2-11b-vision-preview" 
 
 # ==========================================
-# RENDER UYANIK KALSIN DİYE SAĞLIK SUNUCUSU
+# RENDER SAĞLIK SUNUCUSU (Hata Düzeltildi)
 # ==========================================
 class Health(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
         self.wfile.write(b"OK")
-    def logap_message(self, *aıs):
+    def log_message(self, *a):
         pass
 
 def run_health_server():
-    port = int(osı.environ.get("PORT", 10000:))
+    # Hata buradaydı: 10000:)) -> 10000))
+    port = int(os.environ.get("PORT", 10000))
     HTTPServer(("0.0.0.0", port), Health).serve_forever()
 
 # ==========================================
-# XAU/USD M1 İÇİN ÖZEL PROMPT (Yapay Zeka Tembelliği Kırıldı)
+# XAU/USD M1 PROMPT
 # ==========================================
 PROMPT = """Sen dünyanın en iyi XAU/USD (Altın) M1 scalping uzmanısın. 15+ yıllık deneyimli bir profesyonelsin.
 
@@ -37,7 +38,7 @@ Sana TEK bir XAU/USD M1 grafiği gönderiliyor.
 GÖREV: Bu grafiği analiz et ve sonraki 2 dakikalık (2 mumluk) fiyat projeksiyonunu tahmin et.
 
 KULLANMAN GEREKEN TÜM TEKNİKLER:
-- Market y HH/LL, BOS, CHoCH
+- Market yapısı: HH/LL, BOS, CHoCH
 - Destek/direnç seviyeleri, Order Block, Likidite boşlukları
 - EMA 20/50/200, RSI, MACD, Hacim analizi
 - Mum formasyonları (engulfing, pin bar, doji, hammer)
@@ -75,7 +76,7 @@ KURALLAR:
 - Türkçe yaz."""
 
 # ==========================================
-# TELEGRAM YARDIMCI FONKSİYONLARI
+# YARDIMCI FONKSİYONLAR
 # ==========================================
 def send_msg(cid, text):
     try:
@@ -101,16 +102,15 @@ def get_file_bytes(file_id):
     return requests.get(url, timeout=30).content
 
 # ==========================================
-# GROQ ANALİZ MOTORU (Hata Düzeltildi)
+# GROQ ANALİZ MOTORU
 # ==========================================
 def analyze_chart(img_bytes, cid):
     send_msg(cid, "🔍 DEBUG: XAU/USD M1 analiz ediliyor...")
     
-    # Görseli optimize et (Bellek ve hız için)
     img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
-    img.thumbnail((800, 800)) # Boyutu küçültüldü
+    img.thumbnail((800, 800))
     buf = io.BytesIO()
-    img.save(buf, format="JPEG", quality=70) # Kalite düşürüldü
+    img.save(buf, format="JPEG", quality=70)
     b64 = base64.b64encode(buf.getvalue()).decode()
     del img
     del buf
@@ -123,11 +123,10 @@ def analyze_chart(img_bytes, cid):
     
     send_msg(cid, "🔍 DEBUG: Groq'a gönderiliyor...")
     
-    # İstek gövdesi Groq API'sine uygun hale getirildi
     body = {
         "model": GROQ_MODEL,
         "messages": [{"role": "user", "content": content}],
-        "max_tokens": 1500  # max_completion_tokens yerine max_tokens kullanıldı
+        "max_tokens": 1500
     }
     headers = {
         "Content-Type": "application/json",
@@ -139,7 +138,6 @@ def analyze_chart(img_bytes, cid):
         send_msg(cid, f"🔍 DEBUG: Groq HTTP = {resp.status_code}")
         
         if resp.status_code != 200:
-            # Hata detayını Telegram'a gönder ki ne olduğunu görelim
             hata_detayi = resp.text[:400] 
             send_msg(cid, f"❌ Groq Hatası: {hata_detayi}")
             return None
@@ -147,7 +145,6 @@ def analyze_chart(img_bytes, cid):
         r = resp.json()
         text = r["choices"][0]["message"]["content"].strip()
         
-        # JSON temizleme
         if text.startswith("```"):
             text = text.split("```")[1]
             if text.startswith("json"):
@@ -169,26 +166,24 @@ def analyze_chart(img_bytes, cid):
         return None
 
 # ==========================================
-# GÖRSEL PROJEKSİYON ÇİZİMİ (PIL)
+# GÖRSEL PROJEKSİYON ÇİZİMİ
 # ==========================================
 def draw_projection(img_bytes, yon, puanlar):
     img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
     W, H = img.size
     draw = ImageDraw.Draw(img)
     
-    # Yön ve Renk Belirleme (Metin ile Görsel Uyumu)
     if yon == "LONG":
-        renk = (0, 220, 0) # Yeşil
+        renk = (0, 220, 0)
     elif yon == "SHORT":
-        renk = (230, 30, 30) # Kırmızı
+        renk = (230, 30, 30)
     else:
-        return None # BEKLE durumunda çizim yapma
+        return None
         
     n = len(puanlar)
     if n < 2:
         return None
         
-    # Grafiğin sağ tarafına projeksiyon çizimi (Gelecek 2 dakika)
     x1, x2 = int(W * 0.85), int(W * 0.99)
     y_top, y_bot = int(H * 0.10), int(H * 0.90)
     
@@ -198,21 +193,17 @@ def draw_projection(img_bytes, yon, puanlar):
         y = y_bot - (p / 100.0) * (y_bot - y_top)
         noktalar.append((x, y))
         
-    # Çizgiyi çiz
     for i in range(len(noktalar) - 1):
         draw.line([noktalar[i], noktalar[i+1]], fill=renk, width=6)
         
-    # Ok başı ekle
     (xa, ya), (xb, yb) = noktalar[-2], noktalar[-1]
     a = math.atan2(yb - ya, xb - xa)
     s = 25
     for off in (a + math.pi * 0.85, a - math.pi * 0.85):
         draw.line([(xb, yb), (xb + s * math.cos(off), yb + s * math.sin(off))], fill=renk, width=6)
         
-    # Başlangıç noktasına daire
     draw.ellipse([noktalar[0][0]-6, noktalar[0][1]-6, noktalar[0][0]+6, noktalar[0][1]+6], fill=renk)
     
-    # Görselin üstüne metin ekleme
     try:
         font = ImageFont.truetype("arial.ttf", 30)
     except:
@@ -226,7 +217,7 @@ def draw_projection(img_bytes, yon, puanlar):
     return buf.getvalue()
 
 # ==========================================
-# TELEGRAM MESAJ KARTI OLUŞTURMA
+# MESAJ KARTI
 # ==========================================
 def build_card(a):
     yon_emoji = {"LONG": "🟢", "SHORT": "🔴", "BEKLE": "🟡"}
@@ -276,7 +267,7 @@ def build_card(a):
     return "\n".join(t)
 
 # ==========================================
-# ANA DÖNGÜ (TELEGRAM POLLING)
+# ANA DÖNGÜ
 # ==========================================
 def main():
     threading.Thread(target=run_health_server, daemon=True).start()
@@ -298,7 +289,6 @@ def main():
                 if "photo" in msg:
                     caption = (msg.get("caption") or "").strip()
                     
-                    # Sadece XAU/USD yazılıysa analiz et
                     if "XAU" not in caption.upper() and "GOLD" not in caption.upper():
                         send_msg(cid, "⚠️ Lütfen sadece XAU/USD grafiği gönderin ve altına `XAU/USD` yazın.")
                         continue
@@ -313,7 +303,6 @@ def main():
                         if a:
                             kart = build_card(a)
                             
-                            # Eğer işlem sinyali varsa görsel projeksiyon çiz
                             if a.get("yon") != "BEKLE":
                                 gorsel = draw_projection(img_bytes, a.get("yon"), a.get("yol_puani", []))
                             else:
