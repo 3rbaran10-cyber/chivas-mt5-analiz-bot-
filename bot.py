@@ -7,11 +7,11 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 # AYARLAR
 # ==========================================
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
-GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
-# Groq'un GÜNCEL görsel destekli modeli
-GROQ_MODEL = "qwen/qwen3.8-27b" 
+# GEMINI'NIN EN GÜNCEL VE HIZLI GÖRSEL MODELİ
+GEMINI_MODEL = "gemini-3.8-flash"
+GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
 
 # ==========================================
 # RENDER SAĞLIK SUNUCUSU
@@ -101,12 +101,9 @@ def get_file_bytes(file_id):
     return requests.get(url, timeout=30).content
 
 # ==========================================
-# GROQ ANALİZ MOTORU (429 Hatası İçin Bekleme Eklendi)
+# GEMINI ANALİZ MOTORU
 # ==========================================
 def analyze_chart(img_bytes, cid):
-    # Groq API limitini aşmamak için 5 saniye bekle
-    time.sleep(5)
-    
     send_msg(cid, "🔍 DEBUG: XAU/USD M1 analiz ediliyor...")
     
     img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
@@ -117,35 +114,43 @@ def analyze_chart(img_bytes, cid):
     del img
     del buf
 
-    content = [
-        {"type": "text", "text": PROMPT},
-        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}
-    ]
+    payload = {
+        "contents": [
+            {
+                "parts": [
+                    {"text": PROMPT},
+                    {
+                        "inline_data": {
+                            "mime_type": "image/jpeg",
+                            "data": b64
+                        }
+                    }
+                ]
+            }
+        ],
+        "generationConfig": {
+            "temperature": 0.2,
+            "maxOutputTokens": 1500,
+            "responseMimeType": "application/json"
+        }
+    }
     del b64
     
-    send_msg(cid, "🔍 DEBUG: Groq'a gönderiliyor...")
+    send_msg(cid, "🔍 DEBUG: Gemini'ye gönderiliyor...")
     
-    body = {
-        "model": GROQ_MODEL,
-        "messages": [{"role": "user", "content": content}],
-        "max_tokens": 1500
-    }
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {GROQ_API_KEY}"
-    }
+    headers = {"Content-Type": "application/json"}
     
     try:
-        resp = requests.post(GROQ_URL, headers=headers, json=body, timeout=90)
-        send_msg(cid, f"🔍 DEBUG: Groq HTTP = {resp.status_code}")
+        resp = requests.post(GEMINI_URL, headers=headers, json=payload, timeout=90)
+        send_msg(cid, f"🔍 DEBUG: Gemini HTTP = {resp.status_code}")
         
         if resp.status_code != 200:
             hata_detayi = resp.text[:400] 
-            send_msg(cid, f"❌ Groq Hatası: {hata_detayi}")
+            send_msg(cid, f"❌ Gemini Hatası: {hata_detayi}")
             return None
             
         r = resp.json()
-        text = r["choices"][0]["message"]["content"].strip()
+        text = r["candidates"][0]["content"]["parts"][0]["text"].strip()
         
         if text.startswith("```"):
             text = text.split("```")[1]
@@ -168,7 +173,7 @@ def analyze_chart(img_bytes, cid):
         return None
 
 # ==========================================
-# GÖRSEL PROJEKSİYON ÇİZİMİ
+# GÖRSEL PROJEKSİYON ÇİZİMİ (PIL)
 # ==========================================
 def draw_projection(img_bytes, yon, puanlar):
     img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
@@ -273,7 +278,7 @@ def build_card(a):
 # ==========================================
 def main():
     threading.Thread(target=run_health_server, daemon=True).start()
-    print("=== XAU/USD M1 BOTU BAŞLADI ===", flush=True)
+    print(f"=== XAU/USD M1 BOTU BAŞLADI (GEMINI {GEMINI_MODEL}) ===", flush=True)
     offset = 0
     
     while True:
