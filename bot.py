@@ -9,7 +9,6 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
-# ✅ DÜZELTME 1: Doğru model adı (404 hatası çözümü)
 GEMINI_MODEL = "gemini-3.1-pro-preview"
 GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
 
@@ -29,72 +28,70 @@ def run_health_server():
     HTTPServer(("0.0.0.0", port), Health).serve_forever()
 
 # ==========================================
-# XAU/USD M1 PROMPT (v2 - VWAP + FVG + Likidite + Hibrit SL/TP)
+# XAU/USD M1 PROMPT (v3 - responseSchema uyumlu)
 # ==========================================
-PROMPT = """Sen dünyanın en iyi XAU/USD (Altın) M1 scalping uzmanısın. 15+ yıllık deneyimli bir profesyonelsin. Kurumsal trader'larla çalışmış, Smart Money konseptlerini (ICT) derinlemesine bilen bir analistsin.
+PROMPT = """Sen dünyanın en iyi XAU/USD (Altın) M1 scalping uzmanısın. 15+ yıllık deneyimli profesyonelsin. Smart Money konseptlerini (ICT) derinlemesine bilirsin.
 
 Sana TEK bir XAU/USD M1 grafiği gönderiliyor.
-GÖREV: Bu grafiği analiz et ve sonraki 2 dakikalık (2 mumluk) fiyat projeksiyonunu tahmin et.
+GÖREV: Grafiği analiz et ve sonraki 2 dakikalık fiyat projeksiyonunu tahmin et.
 
-KULLANMAN GEREKEN TÜM TEKNİKLER:
+KULLANILACAK TEKNİKLER:
 - Market yapısı: HH/LL, BOS, CHoCH
-- Destek/direnç seviyeleri, Order Block, Likidite boşlukları
-- Supply/Demand Zones (arz/talep bölgeleri)
-- VWAP (Volume Weighted Average Price) - kurumsal referans çizgisi
-- FVG (Fair Value Gap) - fiyat boşlukları
-- Liquidity Sweep - stop avı tespiti
-- Premium/Discount bölgeler (Fibonacci ile)
-- EMA 20/50/200, RSI, MACD, Hacim analizi
+- Destek/direnç, Order Block, Supply/Demand
+- VWAP (ekranda görünüyorsa), FVG, Liquidity Sweep
+- EMA 20/50/200, RSI, MACD, Hacim
 - Mum formasyonları (engulfing, pin bar, doji, hammer)
 - Fibonacci retracement
 
-ÇOK ÖNEMLİ SEVİYE KURALLARI (HİBRİT SİSTEM):
-1. SL seviyesini belirlerken ÖNCE en yakın destek (LONG için) veya direnç (SHORT için) seviyesini bul.
-2. SL'yi bu seviyenin 1-2 puan ÖTESİNE koy (stop avına karşı koruma).
-3. ANCAK minimum SL mesafesi 5 PUAN olmalıdır. Eğer yapı 5 puandan dar SL gerektiriyorsa, 5 puana genişlet.
-4. Minimum TP1 mesafesi 8 PUAN, minimum TP2 mesafesi 12 PUAN olmalıdır.
-5. Spread (0.20-0.50 puan) ve gürültüyü hesaba kat.
-6. Eğer grafiğe göre 5 puanlık SL uygun değilse veya R/R 1:1.5'in altındaysa, "BEKLE" yaz.
+PUAN BİRİMİ (ÇOK ÖNEMLİ):
+XAU/USD'de 1 puan = 1.00$ fiyat hareketi kabul edilir. Yani 4340.00'dan 4341.00'a gitmek 1 puandır.
 
-DİĞER ÇOK ÖNEMLİ KURALLAR:
-1. Eğer güven oranın %65'in ALTINDA ise, "yon" alanına MUTLAKA "BEKLE" yaz.
-2. %65 ve üzeri güvende LONG veya SHORT sinyali ver.
-3. KESİNLİKLE örnek JSON'daki değerleri kopyalama, grafiğe göre kendi objektif kararını ver.
-4. Güven oranını %50, %65, %75, %85, %95 gibi gerçekçi ve değişken aralıklarda ver. Sürekli aynı sayıyı verme.
-5. JSON içindeki metin alanlarında (kisa_analiz, gerekce, uyari vb.) ÇİFT TIRNAK (") KULLANMA. Satır atlamak için \\n kullan. Tek tırnak (') serbesttir.
-6. Cevabın MUTLAKA geçerli ve tam bir JSON olarak bitmeli, yarıda KESİLMEMELİDİR.
+SEVİYE KURALLARI (HİBRİT SİSTEM):
+1. ÖNCE en yakın destek (LONG) veya direnç (SHORT) seviyesini bul.
+2. SL'yi bu seviyenin 0.50-1.00$ ötesine koy.
+3. ANCAK minimum SL mesafesi 2.00$ (2 puan) olmalıdır. Daha dar ASLA olmaz.
+4. Minimum TP1 mesafesi 3.00$ (3 puan), TP2 mesafesi 5.00$ (5 puan).
+5. Spread ve gürültüyü hesaba kat.
+6. R/R 1:1.5'in altındaysa "BEKLE" yaz.
 
-SADECE şu JSON formatında cevap ver, başka hiçbir şey yazma. Örnek değerleri KOPYALAMA:
+KARAR KURALLARI:
+1. Güven %65'in altındaysa "yon" = "BEKLE".
+2. %65+ güvende LONG veya SHORT.
+3. Güven oranını değişken ver (%50, %65, %75, %85, %95 gibi), sürekli aynı sayıyı verme.
+4. VWAP/FVG/Likidite grafikte net görünmüyorsa "belirsiz" yaz, UYDURMA.
 
-{
-  "sembol": "XAU/USD",
-  "yon": "LONG veya SHORT veya BEKLE",
-  "guven": 0-100 arası tam sayı,
-  "giris": "fiyat",
-  "stop_loss": "fiyat",
-  "take_profit": ["fiyat1", "fiyat2"],
-  "risk_odul": "1:2.0",
-  "trend_m1": "yükseliş veya düşüş veya yatay",
-  "vwap_durumu": "fiyat VWAP üstünde veya altında veya belirsiz",
-  "fvg_tespit": "FVG var mı yok mu, varsa kısa açıklama",
-  "likidite_durumu": "Liquidity sweep tespit edildi mi, kısa açıklama",
-  "destekler": ["fiyat1", "fiyat2"],
-  "direncler": ["fiyat1", "fiyat2"],
-  "formasyonlar": ["formasyon1"],
-  "kullanilan_teknikler": ["teknik1", "teknik2"],
-  "kisa_analiz": "2-3 cümle net özet",
-  "gerekce": "Madde 1\\nMadde 2\\nMadde 3",
-  "yol_puani": [50, 45, 60, 55, 40, 30, 20],
-  "uyari": "Yatırım tavsiyesi değildir."
-}
+FORMAT KURALLARI:
+1. JSON içinde ÇİFT TIRNAK (") kullanma, tek tırnak (') kullan.
+2. Satır atlamak için \\n kullan.
+3. Sayılarda NOKTA kullan (4340.50), VİRGÜL kullanma.
+4. SADECE VE SADECE JSON formatında cevap ver. Açıklama, selamlama, giriş cümlesi YAZMA. Doğrudan { ile başla, } ile bitir.
+5. Cevabın MUTLAKA tam ve geçerli JSON olmalı, yarıda KESİLMEMELİ.
 
-KURALLAR:
-- yon: SADECE "LONG", "SHORT" veya "BEKLE"
-- yol_puani: 5-8 nokta, 0=en alt, 100=en üst. (LONG ise yukarı giden, SHORT ise aşağı giden bir yol çiz)
-- Türkçe yaz."""
+JSON ŞEMASI (SADECE BU ALANLARI DOLDUR):
+- sembol: "XAU/USD"
+- yon: "LONG" | "SHORT" | "BEKLE"
+- guven: 0-100 tam sayı
+- giris: "fiyat" (örn: 4340.50)
+- stop_loss: "fiyat"
+- take_profit: ["fiyat1", "fiyat2"]
+- risk_odul: "1:2.0"
+- trend_m1: "yükseliş" | "düşüş" | "yatay"
+- vwap_durumu: "fiyat VWAP üstünde" | "VWAP altında" | "belirsiz"
+- fvg_tespit: "FVG açıklama" | "yok" | "belirsiz"
+- likidite_durumu: "Sweep açıklama" | "yok" | "belirsiz"
+- destekler: ["fiyat1", "fiyat2"]
+- direncler: ["fiyat1", "fiyat2"]
+- formasyonlar: ["formasyon1"]
+- kullanilan_teknikler: ["teknik1", "teknik2"]
+- kisa_analiz: "2-3 cümle net özet"
+- gerekce: "Madde 1\\nMadde 2\\nMadde 3"
+- yol_puani: [50, 45, 60, 55, 40, 30, 20] (5-8 nokta, 0-100 arası)
+- uyari: "Yatırım tavsiyesi değildir."
+
+Türkçe yaz."""
 
 # ==========================================
-# KALICI OFFSET (SQLite ile)
+# KALICI OFFSET (SQLite)
 # ==========================================
 DB_PATH = "/tmp/telegram_offset.db"
 
@@ -130,7 +127,6 @@ def save_offset(offset):
 # YARDIMCI FONKSİYONLAR
 # ==========================================
 def send_msg(cid, text, parse_mode=None):
-    """✅ DÜZELTME 8: Hata mesajlarında parse_mode kaldırıldı"""
     try:
         payload = {"chat_id": cid, "text": text}
         if parse_mode:
@@ -141,7 +137,6 @@ def send_msg(cid, text, parse_mode=None):
         print(f"send_msg hatası: {e}", flush=True)
 
 def send_photo(cid, photo_bytes, caption=""):
-    """✅ DÜZELTME 2: Caption 1024 karakter sınırı kontrolü"""
     try:
         requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto",
                       data={"chat_id": cid, "caption": caption[:1024]},
@@ -157,24 +152,31 @@ def get_file_bytes(file_id):
     return requests.get(url, timeout=30).content
 
 def escape_md(text):
-    """✅ DÜZELTME 6: Markdown kaçış karakterleri temizlenir"""
+    """✅ DÜZELTME: Artık silmiyor, gerçekten kaçırıyor"""
     if not isinstance(text, str):
         text = str(text)
-    for ch in ['_', '*', '[', ']', '`', '~']:
-        text = text.replace(ch, '')
+    # Markdown V1 için: _ * ` [ kaçır
+    for ch in ['_', '*', '`', '[']:
+        text = text.replace(ch, '\\' + ch)
     return text
 
-# ==========================================
-# ✅ DÜZELTME 3: yol_puani doğrulaması
-# ==========================================
+def temizle_sayi(deger):
+    """✅ DÜZELTME: Türkçe virgüllü ondalık -> nokta"""
+    if deger is None:
+        return deger
+    s = str(deger).strip()
+    # Eğer virgül varsa ve nokta yoksa virgülü nokta yap
+    if ',' in s and '.' not in s:
+        s = s.replace(',', '.')
+    return s
+
 def validate_yol_puani(puanlar):
-    """Sadece geçerli sayıları al, en az 2 nokta olmalı"""
     if not isinstance(puanlar, list):
         return None
     temiz = []
     for p in puanlar:
         try:
-            p = float(p)
+            p = float(str(p).replace(',', '.'))
             if 0 <= p <= 100:
                 temiz.append(p)
         except (ValueError, TypeError):
@@ -182,10 +184,10 @@ def validate_yol_puani(puanlar):
     return temiz if len(temiz) >= 2 else None
 
 # ==========================================
-# ✅ DÜZELTME 9: Rate Limiting
+# RATE LIMITING
 # ==========================================
 USER_COOLDOWN = {}
-RATE_LIMIT_SECONDS = 15
+RATE_LIMIT_SECONDS = 10
 
 def check_rate_limit(cid):
     now = time.time()
@@ -198,10 +200,10 @@ def check_rate_limit(cid):
     return True
 
 # ==========================================
-# GEMINI ANALİZ MOTORU (PRO - Kusursuz JSON Okuma)
+# GEMINI ANALİZ MOTORU (responseSchema ile)
 # ==========================================
 def analyze_chart(img_bytes, cid):
-    print(f"🔍 DEBUG: XAU/USD M1 analiz ediliyor... (Model: {GEMINI_MODEL})", flush=True)
+    print(f"🔍 DEBUG: Analiz başladı (Model: {GEMINI_MODEL})", flush=True)
     
     img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
     img.thumbnail((800, 800))
@@ -219,16 +221,41 @@ def analyze_chart(img_bytes, cid):
             ]
         }],
         "generationConfig": {
-            "temperature": 0.2,
+            "temperature": 0.3,
             "maxOutputTokens": 4000,
-            "responseMimeType": "application/json"
+            "responseMimeType": "application/json",
+            "responseSchema": {
+                "type": "object",
+                "properties": {
+                    "sembol": {"type": "string"},
+                    "yon": {"type": "string", "enum": ["LONG", "SHORT", "BEKLE"]},
+                    "guven": {"type": "integer"},
+                    "giris": {"type": "string"},
+                    "stop_loss": {"type": "string"},
+                    "take_profit": {"type": "array", "items": {"type": "string"}},
+                    "risk_odul": {"type": "string"},
+                    "trend_m1": {"type": "string"},
+                    "vwap_durumu": {"type": "string"},
+                    "fvg_tespit": {"type": "string"},
+                    "likidite_durumu": {"type": "string"},
+                    "destekler": {"type": "array", "items": {"type": "string"}},
+                    "direncler": {"type": "array", "items": {"type": "string"}},
+                    "formasyonlar": {"type": "array", "items": {"type": "string"}},
+                    "kullanilan_teknikler": {"type": "array", "items": {"type": "string"}},
+                    "kisa_analiz": {"type": "string"},
+                    "gerekce": {"type": "string"},
+                    "yol_puani": {"type": "array", "items": {"type": "number"}},
+                    "uyari": {"type": "string"}
+                },
+                "required": ["sembol", "yon", "guven", "kisa_analiz", "gerekce", "yol_puani"]
+            }
         }
     }
     del b64
     
     headers = {
         "Content-Type": "application/json",
-        "x-goog-api-key": GEMINI_API_KEY  # ✅ DÜZELTME 10: API anahtarı başlıkta
+        "x-goog-api-key": GEMINI_API_KEY
     }
     
     max_deneme = 3
@@ -245,7 +272,7 @@ def analyze_chart(img_bytes, cid):
                     send_msg(cid, "❌ Gemini boş cevap döndü.", parse_mode=None)
                     return None
                 
-                # JSON Temizleme
+                # Kod bloğu temizleme
                 if "```json" in text:
                     text = text.split("```json")[1].split("```")[0]
                 elif "```" in text:
@@ -256,12 +283,12 @@ def analyze_chart(img_bytes, cid):
                             text = text[4:]
                 text = text.strip()
 
-                # GÜVENLİ JSON OKUMA (Kurtarma Modu)
+                # JSON okuma
                 a = None
                 try:
                     a = json.loads(text)
                 except json.JSONDecodeError as e:
-                    print(f"JSON Hatası, kurtarma deneniyor: {e}", flush=True)
+                    print(f"JSON Hatası, kurtarma: {e}", flush=True)
                     bas = text.find('{')
                     son = text.rfind('}')
                     if bas != -1 and son != -1 and son > bas:
@@ -269,18 +296,24 @@ def analyze_chart(img_bytes, cid):
                             a = json.loads(text[bas:son+1])
                         except Exception as e2:
                             print(f"Kurtarma başarısız: {e2}", flush=True)
-                            send_msg(cid, "❌ Gemini cevabı bozuk JSON içeriyor. Tekrar deneyin.", parse_mode=None)
+                            send_msg(cid, "❌ Gemini cevabı bozuk JSON. Tekrar deneyin.", parse_mode=None)
                             return None
                     else:
-                        send_msg(cid, "❌ Gemini cevabında JSON bulunamadı.", parse_mode=None)
+                        send_msg(cid, "❌ Gemini cevabında JSON yok. Tekrar deneyin.", parse_mode=None)
                         return None
+                
+                # Sayısal alanları temizle
+                for k in ["giris", "stop_loss"]:
+                    if k in a:
+                        a[k] = temizle_sayi(a[k])
+                if "take_profit" in a and isinstance(a["take_profit"], list):
+                    a["take_profit"] = [temizle_sayi(x) for x in a["take_profit"]]
                 
                 # Güven kontrolü
                 try:
                     g = int(a.get("guven", 0))
                 except:
                     g = 0
-                    
                 if g < 65:
                     a["yon"] = "BEKLE"
                     
@@ -288,28 +321,28 @@ def analyze_chart(img_bytes, cid):
             
             elif resp.status_code == 503:
                 if deneme < max_deneme - 1:
-                    bekleme_suresi = (deneme + 1) * 10 
-                    send_msg(cid, f"⏳ Gemini şu an çok yoğun. {bekleme_suresi} saniye sonra tekrar denenecek... ({deneme+1}/{max_deneme})")
-                    time.sleep(bekleme_suresi)
+                    bekleme = (deneme + 1) * 10
+                    send_msg(cid, f"⏳ Gemini yoğun. {bekleme} sn sonra tekrar... ({deneme+1}/{max_deneme})")
+                    time.sleep(bekleme)
                     continue
                 else:
-                    send_msg(cid, "❌ Gemini sunucuları şu an aşırı yoğun. Lütfen birkaç dakika sonra tekrar deneyin.", parse_mode=None)
+                    send_msg(cid, "❌ Gemini şu an aşırı yoğun. Sonra deneyin.", parse_mode=None)
                     return None
             elif resp.status_code == 429:
-                send_msg(cid, "⚠️ Çok fazla istek. 30 saniye bekleyip tekrar deneyin.", parse_mode=None)
+                send_msg(cid, "⚠️ Çok fazla istek. 30 sn bekleyin.", parse_mode=None)
                 time.sleep(30)
                 continue
             else:
-                hata_detayi = resp.text[:400]
-                send_msg(cid, f"❌ Gemini Hatası ({resp.status_code}): {hata_detayi}", parse_mode=None)
+                hata = resp.text[:400]
+                send_msg(cid, f"❌ Gemini Hatası ({resp.status_code}): {hata}", parse_mode=None)
                 return None
                 
         except Exception as e:
-            send_msg(cid, f"❌ Analiz Hatası: {str(e)}", parse_mode=None)
+            send_msg(cid, f"❌ Analiz Hatası: {str(e)[:200]}", parse_mode=None)
             return None
 
 # ==========================================
-# ✅ DÜZELTME 4: Görsel Projeksiyon Çizimi (Geliştirilmiş Ok Başı)
+# GÖRSEL PROJEKSİYON
 # ==========================================
 def draw_projection(img_bytes, yon, puanlar):
     img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
@@ -323,17 +356,16 @@ def draw_projection(img_bytes, yon, puanlar):
     else:
         return None
     
-    # ✅ yol_puani doğrulaması
-    temiz_puanlar = validate_yol_puani(puanlar)
-    if not temiz_puanlar:
+    temiz = validate_yol_puani(puanlar)
+    if not temiz:
         return None
         
-    n = len(temiz_puanlar)
+    n = len(temiz)
     x1, x2 = int(W * 0.85), int(W * 0.99)
     y_top, y_bot = int(H * 0.10), int(H * 0.90)
     
     noktalar = []
-    for i, p in enumerate(temiz_puanlar):
+    for i, p in enumerate(temiz):
         x = x1 + (x2 - x1) * i / (n - 1)
         y = y_bot - (p / 100.0) * (y_bot - y_top)
         noktalar.append((x, y))
@@ -341,36 +373,34 @@ def draw_projection(img_bytes, yon, puanlar):
     for i in range(len(noktalar) - 1):
         draw.line([noktalar[i], noktalar[i+1]], fill=renk, width=6)
         
-    # ✅ Geliştirilmiş ok başı (polygon ile)
     (xa, ya), (xb, yb) = noktalar[-2], noktalar[-1]
     angle = math.atan2(yb - ya, xb - xa)
     arrow_len = 30
-    arrow_angle = math.pi / 6  # 30 derece
+    arrow_angle = math.pi / 6
     
     p1 = (xb, yb)
-    p2 = (xb - arrow_len * math.cos(angle - arrow_angle), 
+    p2 = (xb - arrow_len * math.cos(angle - arrow_angle),
           yb - arrow_len * math.sin(angle - arrow_angle))
-    p3 = (xb - arrow_len * math.cos(angle + arrow_angle), 
+    p3 = (xb - arrow_len * math.cos(angle + arrow_angle),
           yb - arrow_len * math.sin(angle + arrow_angle))
     
     draw.polygon([p1, p2, p3], fill=renk)
-    
-    draw.ellipse([noktalar[0][0]-6, noktalar[0][1]-6, noktalar[0][0]+6, noktalar[0][1]+6], fill=renk)
+    draw.ellipse([noktalar[0][0]-6, noktalar[0][1]-6,
+                  noktalar[0][0]+6, noktalar[0][1]+6], fill=renk)
     
     try:
         font = ImageFont.truetype("arial.ttf", 30)
     except:
         font = ImageFont.load_default()
         
-    text = f"XAU/USD M1 | {yon} | 2 Dk Projeksiyon"
-    draw.text((20, 20), text, fill=renk, font=font)
+    draw.text((20, 20), f"XAU/USD M1 | {yon} | 2 Dk Projeksiyon", fill=renk, font=font)
 
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()
 
 # ==========================================
-# MESAJ KARTI (✅ v2: Yeni alanlar eklendi)
+# MESAJ KARTI
 # ==========================================
 def build_card(a):
     yon_emoji = {"LONG": "🟢", "SHORT": "🔴", "BEKLE": "🟡"}
@@ -398,48 +428,43 @@ def build_card(a):
     t.append("╚══════════════════════════╝")
     t.append("")
     t.append("📈 TREND ANALİZİ")
-    t.append(f"• M1:  {a.get('trend_m1','?')}")
+    t.append(f"• M1:  {escape_md(a.get('trend_m1','?'))}")
     
-    # ✅ YENİ: VWAP, FVG ve Likidite durumu
     vwap = a.get("vwap_durumu", "")
-    if vwap and vwap.lower() != "belirsiz":
+    if vwap and vwap.lower() not in ["belirsiz", ""]:
         t.append(f"• VWAP: {escape_md(vwap)}")
     
     t.append("")
     t.append("🎯 SEVİYELER")
-    
     destekler = a.get("destekler", [])
     direncler = a.get("direncler", [])
     t.append(f"🟢 Destek: {', '.join(map(str, destekler)) if destekler else 'Belirsiz'}")
     t.append(f"🔴 Direnç: {', '.join(map(str, direncler)) if direncler else 'Belirsiz'}")
     
-    # ✅ YENİ: Smart Money göstergeleri
     fvg = a.get("fvg_tespit", "")
     likidite = a.get("likidite_durumu", "")
-    sm_list = []
+    sm = []
     if fvg and fvg.lower() not in ["yok", "belirsiz", ""]:
-        sm_list.append(f"📦 FVG: {escape_md(fvg)}")
+        sm.append(f"📦 FVG: {escape_md(fvg)}")
     if likidite and likidite.lower() not in ["yok", "belirsiz", ""]:
-        sm_list.append(f"💧 Likidite: {escape_md(likidite)}")
-    
-    if sm_list:
+        sm.append(f"💧 Likidite: {escape_md(likidite)}")
+    if sm:
         t.append("")
         t.append("🧠 SMART MONEY")
-        for s in sm_list:
+        for s in sm:
             t.append(s)
     
     formasyonlar = a.get("formasyonlar", [])
     if formasyonlar:
         t.append("")
-        t.append(f"🧩 Formasyon: {', '.join(map(str, formasyonlar))}")
+        t.append(f"🧩 Formasyon: {escape_md(', '.join(map(str, formasyonlar)))}")
         
     t.append("")
     t.append("📝 ÖZET")
     t.append(escape_md(a.get('kisa_analiz','')))
     t.append("")
     t.append("🔍 GEREKÇELER")
-    gerekce_text = a.get("gerekce", "")
-    for g in str(gerekce_text).replace("\\n", "\n").split("\n"):
+    for g in str(a.get("gerekce", "")).replace("\\n", "\n").split("\n"):
         if g.strip():
             t.append(f"• {escape_md(g.strip())}")
             
@@ -448,7 +473,7 @@ def build_card(a):
     return "\n".join(t)
 
 # ==========================================
-# ANA DÖNGÜ (✅ DÜZELTME 7: Kalıcı Offset)
+# ANA DÖNGÜ
 # ==========================================
 def main():
     threading.Thread(target=run_health_server, daemon=True).start()
@@ -477,11 +502,11 @@ def main():
                     caption = (msg.get("caption") or "").strip()
                     
                     if "XAU" not in caption.upper() and "GOLD" not in caption.upper():
-                        send_msg(cid, "⚠️ Lütfen sadece XAU/USD grafiği gönderin ve altına `XAU/USD` yazın.")
+                        send_msg(cid, "⚠️ Lütfen XAU/USD grafiği gönderin ve altına `XAU/USD` yazın.")
                         continue
                         
                     fid = msg["photo"][-1]["file_id"]
-                    send_msg(cid, "⏳ XAU/USD M1 grafiği alındı, analiz ediliyor... (Pro modeli için 1-2 dakika sürebilir)")
+                    send_msg(cid, "⏳ Grafik alındı, analiz ediliyor...")
                     
                     try:
                         img_bytes = get_file_bytes(fid)
@@ -504,19 +529,17 @@ def main():
                             else:
                                 send_msg(cid, kart)
                         else:
-                            send_msg(cid, "❌ Analiz başarısız oldu, lütfen tekrar deneyin.", parse_mode=None)
+                            send_msg(cid, "❌ Analiz başarısız, tekrar deneyin.", parse_mode=None)
                             
                     except Exception as e:
-                        send_msg(cid, f"❌ Beklenmeyen Hata: {str(e)}", parse_mode=None)
+                        send_msg(cid, f"❌ Hata: {str(e)[:200]}", parse_mode=None)
                 else:
                     send_msg(cid,
-                        "📸 *XAU/USD M1 Analiz Botu (PRO v2)*\n\n"
+                        "📸 *XAU/USD M1 Analiz Botu (PRO v3)*\n\n"
                         "Kullanım:\n"
-                        "1️⃣ MT5'ten XAU/USD M1 grafiğinin ekran görüntüsünü al.\n"
-                        "2️⃣ Bu fotoğrafı bota gönder.\n"
-                        "3️⃣ Altına (caption) `XAU/USD` yaz.\n\n"
-                        "Bot artık VWAP, FVG ve Likidite analizini de kullanıyor. "
-                        "Hibrit SL/TP sistemi ile minimum 5 puan SL koruması aktif.\n\n"
+                        "1️⃣ MT5'ten XAU/USD M1 grafiği ekran görüntüsü al\n"
+                        "2️⃣ Fotoğrafı bota gönder\n"
+                        "3️⃣ Altına `XAU/USD` yaz\n\n"
                         "⚠️ Yatırım tavsiyesi değildir.",
                         parse_mode="Markdown")
                         
