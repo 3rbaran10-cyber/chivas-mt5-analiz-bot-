@@ -9,11 +9,11 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
-# GEMINI'NIN EN GÜNCEL VE HIZLI GÖRSEL MODELİ
-GEMINI_MODEL = "gemini-3.8-flash"
-# Resmi dokümantasyona göre generateContent hala destekleniyor.
-# Alternatif olarak, daha yeni Interactions API'si de kullanılabilir:
-# GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/interactions"
+# ==========================================
+# GEMINI MODEL - PRO VERSİYON (2026 GÜNCEL)
+# ==========================================
+# En güncel ve güçlü Pro modeli
+GEMINI_MODEL = "gemini-3.1-pro"
 GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
 
 # ==========================================
@@ -51,6 +51,8 @@ KULLANMAN GEREKEN TÜM TEKNİKLER:
 2. %65 ve üzeri güvende LONG veya SHORT sinyali ver.
 3. KESİNLİKLE örnek JSON'daki değerleri kopyalama, grafiğe göre kendi objektif kararını ver.
 4. Güven oranını %50, %65, %75, %85, %95 gibi gerçekçi ve değişken aralıklarda ver. Sürekli aynı sayıyı verme.
+5. JSON içindeki metin alanlarında (kisa_analiz, gerekce, uyari vb.) ÇİFT TIRNAK (") KULLANMA. Satır atlamak için \\n kullan. Tek tırnak (') serbesttir.
+6. Cevabın MUTLAKA geçerli ve tam bir JSON olarak bitmeli, yarıda KESİLMEMELİDİR.
 
 SADECE şu JSON formatında cevap ver, başka hiçbir şey yazma. Örnek değerleri KOPYALAMA:
 
@@ -105,10 +107,10 @@ def get_file_bytes(file_id):
     return requests.get(url, timeout=30).content
 
 # ==========================================
-# GEMINI ANALİZ MOTORU (API Anahtarı Başlıkta Gönderiliyor)
+# GEMINI ANALİZ MOTORU (PRO - Dayanıklı JSON Okuma)
 # ==========================================
 def analyze_chart(img_bytes, cid):
-    send_msg(cid, "🔍 DEBUG: XAU/USD M1 analiz ediliyor...")
+    send_msg(cid, f"🔍 DEBUG: XAU/USD M1 analiz ediliyor... (Model: {GEMINI_MODEL})")
     
     img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
     img.thumbnail((800, 800))
@@ -127,15 +129,14 @@ def analyze_chart(img_bytes, cid):
         }],
         "generationConfig": {
             "temperature": 0.2,
-            "maxOutputTokens": 1500,
+            "maxOutputTokens": 4000,          # 1500'den 4000'e çıkarıldı
             "responseMimeType": "application/json"
         }
     }
     del b64
     
-    send_msg(cid, "🔍 DEBUG: Gemini'ye gönderiliyor...")
+    send_msg(cid, "🔍 DEBUG: Gemini Pro'ya gönderiliyor...")
     
-    # API anahtarını başlıkta gönder (resmi yöntem)
     headers = {
         "Content-Type": "application/json",
         "x-goog-api-key": GEMINI_API_KEY
@@ -144,20 +145,51 @@ def analyze_chart(img_bytes, cid):
     max_deneme = 3
     for deneme in range(max_deneme):
         try:
-            resp = requests.post(GEMINI_URL, headers=headers, json=payload, timeout=90)
+            resp = requests.post(GEMINI_URL, headers=headers, json=payload, timeout=120)
             send_msg(cid, f"🔍 DEBUG: Gemini HTTP = {resp.status_code}")
             
             if resp.status_code == 200:
                 r = resp.json()
-                text = r["candidates"][0]["content"]["parts"][0]["text"].strip()
                 
-                if text.startswith("```"):
-                    text = text.split("```")[1]
-                    if text.startswith("json"):
-                        text = text[4:]
-                text = text.strip().rstrip("`").strip()
+                # Cevabı güvenli şekilde al
+                try:
+                    text = r["candidates"][0]["content"]["parts"][0]["text"].strip()
+                except (KeyError, IndexError):
+                    send_msg(cid, "❌ Gemini boş cevap döndü.")
+                    return None
                 
-                a = json.loads(text)
+                # JSON Temizleme (kod bloklarını kaldır)
+                if "```json" in text:
+                    text = text.split("```json")[1].split("```")[0]
+                elif "```" in text:
+                    parts = text.split("```")
+                    if len(parts) >= 2:
+                        text = parts[1]
+                        if text.startswith("json"):
+                            text = text[4:]
+                text = text.strip()
+
+                # GÜVENLİ JSON OKUMA (Kurtarma Modu)
+                a = None
+                try:
+                    a = json.loads(text)
+                except json.JSONDecodeError as e:
+                    print(f"JSON Hatası, kurtarma deneniyor: {e}", flush=True)
+                    # Metnin içinden { ile } arasını bulup tekrar dene
+                    bas = text.find('{')
+                    son = text.rfind('}')
+                    if bas != -1 and son != -1 and son > bas:
+                        try:
+                            a = json.loads(text[bas:son+1])
+                        except Exception as e2:
+                            print(f"Kurtarma başarısız: {e2}", flush=True)
+                            send_msg(cid, "❌ Gemini cevabı bozuk JSON içeriyor. Tekrar deneyin.")
+                            return None
+                    else:
+                        send_msg(cid, "❌ Gemini cevabında JSON bulunamadı.")
+                        return None
+                
+                # Güven kontrolü
                 try:
                     g = int(a.get("guven", 0))
                 except:
@@ -177,9 +209,13 @@ def analyze_chart(img_bytes, cid):
                 else:
                     send_msg(cid, "❌ Gemini sunucuları şu an aşırı yoğun. Lütfen birkaç dakika sonra tekrar deneyin.")
                     return None
+            elif resp.status_code == 429:
+                send_msg(cid, "⚠️ Çok fazla istek. 30 saniye bekleyip tekrar deneyin.")
+                time.sleep(30)
+                continue
             else:
-                hata_detayi = resp.text[:400] 
-                send_msg(cid, f"❌ Gemini Hatası: {hata_detayi}")
+                hata_detayi = resp.text[:400]
+                send_msg(cid, f"❌ Gemini Hatası ({resp.status_code}): {hata_detayi}")
                 return None
                 
         except Exception as e:
@@ -210,6 +246,10 @@ def draw_projection(img_bytes, yon, puanlar):
     
     noktalar = []
     for i, p in enumerate(puanlar):
+        try:
+            p = float(p)
+        except:
+            p = 50
         x = x1 + (x2 - x1) * i / (n - 1)
         y = y_bot - (p / 100.0) * (y_bot - y_top)
         noktalar.append((x, y))
@@ -245,7 +285,7 @@ def build_card(a):
     e = yon_emoji.get(a.get("yon","BEKLE"), "⚪")
     t = []
     t.append("╔══════════════════════════╗")
-    t.append(f"║  📊 XAU/USD M1 ANALİZİ")
+    t.append(f"║  📊 XAU/USD M1 ANALİZİ (PRO)")
     t.append("╠══════════════════════════╣")
     t.append(f"║  {e} YÖN: {a.get('yon','?')}")
     t.append(f"║  🎯 GÜVEN: %{a.get('guven','?')}")
@@ -267,8 +307,8 @@ def build_card(a):
     t.append(f"• M1:  {a.get('trend_m1','?')}")
     t.append("")
     t.append("🎯 SEVİYELER")
-    t.append(f"🟢 Destek: {', '.join(a.get('destekler',[]))}")
-    t.append(f"🔴 Direnç: {', '.join(a.get('direncler',[]))}")
+    t.append(f"🟢 Destek: {', '.join(map(str, a.get('destekler',[])))}")
+    t.append(f"🔴 Direnç: {', '.join(map(str, a.get('direncler',[])))}")
     
     if a.get("formasyonlar"):
         t.append("")
@@ -279,7 +319,9 @@ def build_card(a):
     t.append(a.get('kisa_analiz',''))
     t.append("")
     t.append("🔍 GEREKÇELER")
-    for g in a.get("gerekce", "").split("\\n"):
+    gerekce_text = a.get("gerekce", "")
+    # Hem \\n hem gerçek newline'ı destekle
+    for g in gerekce_text.replace("\\n", "\n").split("\n"):
         if g.strip():
             t.append(f"• {g.strip()}")
             
@@ -315,7 +357,7 @@ def main():
                         continue
                         
                     fid = msg["photo"][-1]["file_id"]
-                    send_msg(cid, "⏳ XAU/USD M1 grafiği alındı, analiz ediliyor... (30-60 sn)")
+                    send_msg(cid, "⏳ XAU/USD M1 grafiği alındı, analiz ediliyor... (Pro modeli için 1-2 dakika sürebilir)")
                     
                     try:
                         img_bytes = get_file_bytes(fid)
@@ -340,7 +382,7 @@ def main():
                         send_msg(cid, f"❌ Beklenmeyen Hata: {str(e)}")
                 else:
                     send_msg(cid,
-                        "📸 *XAU/USD M1 Analiz Botu*\n\n"
+                        "📸 *XAU/USD M1 Analiz Botu (PRO)*\n\n"
                         "Kullanım:\n"
                         "1️⃣ MT5'ten XAU/USD M1 grafiğinin ekran görüntüsünü al.\n"
                         "2️⃣ Bu fotoğrafı bota gönder.\n"
