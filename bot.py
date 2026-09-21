@@ -1,5 +1,3 @@
-XAU/ SL SP UZAK BOTU 
-
 import os
 import io, json, base64, time, math, requests, threading
 from PIL import Image, ImageDraw, ImageFont
