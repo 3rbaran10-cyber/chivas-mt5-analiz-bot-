@@ -9,8 +9,8 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
-# GEMINI'NIN EN GÜNCEL VE HIZLI GÖRSEL MODELİ
-GEMINI_MODEL = "gemini-3.8-flash"
+# GEMINI'NIN EN KALİTELİ VE KAPSAMLI ANALİZ MODELİ
+GEMINI_MODEL = "gemini-1.5-pro"
 GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
 
 # ==========================================
@@ -102,10 +102,10 @@ def get_file_bytes(file_id):
     return requests.get(url, timeout=30).content
 
 # ==========================================
-# GEMINI ANALİZ MOTORU (503 Hatası İçin Otomatik Tekrar Deneme Eklendi)
+# GEMINI ANALİZ MOTORU (GÜNCELLENDİ: Pro Model & 4096 Token & Güvenli JSON Temizleme)
 # ==========================================
 def analyze_chart(img_bytes, cid):
-    send_msg(cid, "🔍 DEBUG: XAU/USD M1 analiz ediliyor...")
+    send_msg(cid, "🔍 DEBUG: XAU/USD M1 analiz ediliyor (PRO model)...")
     
     img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
     img.thumbnail((800, 800))
@@ -124,13 +124,13 @@ def analyze_chart(img_bytes, cid):
         }],
         "generationConfig": {
             "temperature": 0.2,
-            "maxOutputTokens": 1500,
+            "maxOutputTokens": 4096,  # 1500'den 4096'ya çıkarıldı
             "responseMimeType": "application/json"
         }
     }
     del b64
     
-    send_msg(cid, "🔍 DEBUG: Gemini'ye gönderiliyor...")
+    send_msg(cid, "🔍 DEBUG: Gemini Pro'ya gönderiliyor...")
     headers = {"Content-Type": "application/json"}
     
     max_deneme = 3
@@ -143,11 +143,11 @@ def analyze_chart(img_bytes, cid):
                 r = resp.json()
                 text = r["candidates"][0]["content"]["parts"][0]["text"].strip()
                 
-                if text.startswith("```"):
-                    text = text.split("```")[1]
-                    if text.startswith("json"):
-                        text = text[4:]
-                text = text.strip().rstrip("`").strip()
+                # GÜVENLİ JSON TEMİZLEME (Markdown bloklarını ve fazlalıkları otomatik temizler)
+                start_idx = text.find('{')
+                end_idx = text.rfind('}')
+                if start_idx != -1 and end_idx != -1:
+                    text = text[start_idx:end_idx+1]
                 
                 a = json.loads(text)
                 try:
