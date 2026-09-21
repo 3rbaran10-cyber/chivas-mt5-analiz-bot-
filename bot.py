@@ -10,11 +10,11 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
-# Groq'un görsel destekli GÜVENİLİR modeli
-GROQ_MODEL = "llama-3.2-11b-vision-preview" 
+# Groq'un GÜNCEL görsel destekli modeli (Eski model kullanımdan kaldırıldı)
+GROQ_MODEL = "qwen/qwen3.8-27b" 
 
 # ==========================================
-# RENDER SAĞLIK SUNUCUSU (Hata Düzeltildi)
+# RENDER SAĞLIK SUNUCUSU
 # ==========================================
 class Health(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -25,7 +25,6 @@ class Health(BaseHTTPRequestHandler):
         pass
 
 def run_health_server():
-    # Hata buradaydı: 10000:)) -> 10000))
     port = int(os.environ.get("PORT", 10000))
     HTTPServer(("0.0.0.0", port), Health).serve_forever()
 
