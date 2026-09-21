@@ -10,7 +10,7 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
-# Groq'un GÜNCEL görsel destekli modeli (Eski model kullanımdan kaldırıldı)
+# Groq'un GÜNCEL görsel destekli modeli
 GROQ_MODEL = "qwen/qwen3.8-27b" 
 
 # ==========================================
@@ -101,9 +101,12 @@ def get_file_bytes(file_id):
     return requests.get(url, timeout=30).content
 
 # ==========================================
-# GROQ ANALİZ MOTORU
+# GROQ ANALİZ MOTORU (429 Hatası İçin Bekleme Eklendi)
 # ==========================================
 def analyze_chart(img_bytes, cid):
+    # Groq API limitini aşmamak için 5 saniye bekle
+    time.sleep(5)
+    
     send_msg(cid, "🔍 DEBUG: XAU/USD M1 analiz ediliyor...")
     
     img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
