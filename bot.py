@@ -1,5 +1,5 @@
 import os
-import io, json, base64, time, math, requests, threading
+import io, json, base64, time, math, requests, threading, re, sqlite3
 from PIL import Image, ImageDraw, ImageFont
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -9,11 +9,8 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
-# ==========================================
-# GEMINI MODEL - PRO VERSİYON (2026 GÜNCEL)
-# ==========================================
-# En güncel ve güçlü Pro modeli
-GEMINI_MODEL = "gemini-3.1-pro"
+# ✅ DÜZELTME 1: Doğru model adı (404 hatası çözümü)
+GEMINI_MODEL = "gemini-3.1-pro-preview"
 GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
 
 # ==========================================
@@ -81,17 +78,54 @@ KURALLAR:
 - Türkçe yaz."""
 
 # ==========================================
+# KALICI OFFSET (SQLite ile)
+# ==========================================
+DB_PATH = "/tmp/telegram_offset.db"
+
+def init_offset_db():
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.execute("CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value INTEGER)")
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"DB init hatası: {e}", flush=True)
+
+def get_offset():
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cur = conn.execute("SELECT value FROM state WHERE key='offset'")
+        row = cur.fetchone()
+        conn.close()
+        return row[0] if row else 0
+    except:
+        return 0
+
+def save_offset(offset):
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.execute("INSERT OR REPLACE INTO state (key, value) VALUES ('offset', ?)", (offset,))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"Offset kaydetme hatası: {e}", flush=True)
+
+# ==========================================
 # YARDIMCI FONKSİYONLAR
 # ==========================================
-def send_msg(cid, text):
+def send_msg(cid, text, parse_mode=None):
+    """✅ DÜZELTME 8: Hata mesajlarında parse_mode kaldırıldı"""
     try:
+        payload = {"chat_id": cid, "text": text}
+        if parse_mode:
+            payload["parse_mode"] = parse_mode
         requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
-                      json={"chat_id": cid, "text": text, "parse_mode": "Markdown"},
-                      timeout=10)
+                      json=payload, timeout=10)
     except Exception as e:
         print(f"send_msg hatası: {e}", flush=True)
 
 def send_photo(cid, photo_bytes, caption=""):
+    """✅ DÜZELTME 2: Caption 1024 karakter sınırı kontrolü"""
     try:
         requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto",
                       data={"chat_id": cid, "caption": caption[:1024]},
@@ -106,11 +140,52 @@ def get_file_bytes(file_id):
     url = f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/{r['result']['file_path']}"
     return requests.get(url, timeout=30).content
 
+def escape_md(text):
+    """✅ DÜZELTME 6: Markdown kaçış karakterleri temizlenir"""
+    if not isinstance(text, str):
+        text = str(text)
+    for ch in ['_', '*', '[', ']', '`', '~']:
+        text = text.replace(ch, '')
+    return text
+
 # ==========================================
-# GEMINI ANALİZ MOTORU (PRO - Dayanıklı JSON Okuma)
+# ✅ DÜZELTME 3: yol_puani doğrulaması
+# ==========================================
+def validate_yol_puani(puanlar):
+    """Sadece geçerli sayıları al, en az 2 nokta olmalı"""
+    if not isinstance(puanlar, list):
+        return None
+    temiz = []
+    for p in puanlar:
+        try:
+            p = float(p)
+            if 0 <= p <= 100:
+                temiz.append(p)
+        except (ValueError, TypeError):
+            continue
+    return temiz if len(temiz) >= 2 else None
+
+# ==========================================
+# ✅ DÜZELTME 9: Rate Limiting
+# ==========================================
+USER_COOLDOWN = {}
+RATE_LIMIT_SECONDS = 15
+
+def check_rate_limit(cid):
+    now = time.time()
+    last = USER_COOLDOWN.get(cid, 0)
+    if now - last < RATE_LIMIT_SECONDS:
+        kalan = int(RATE_LIMIT_SECONDS - (now - last))
+        send_msg(cid, f"⏳ Çok hızlı gönderiyorsunuz. {kalan} saniye bekleyin.")
+        return False
+    USER_COOLDOWN[cid] = now
+    return True
+
+# ==========================================
+# GEMINI ANALİZ MOTORU (PRO - Kusursuz JSON Okuma)
 # ==========================================
 def analyze_chart(img_bytes, cid):
-    send_msg(cid, f"🔍 DEBUG: XAU/USD M1 analiz ediliyor... (Model: {GEMINI_MODEL})")
+    print(f"🔍 DEBUG: XAU/USD M1 analiz ediliyor... (Model: {GEMINI_MODEL})", flush=True)
     
     img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
     img.thumbnail((800, 800))
@@ -129,36 +204,32 @@ def analyze_chart(img_bytes, cid):
         }],
         "generationConfig": {
             "temperature": 0.2,
-            "maxOutputTokens": 4000,          # 1500'den 4000'e çıkarıldı
+            "maxOutputTokens": 4000,
             "responseMimeType": "application/json"
         }
     }
     del b64
     
-    send_msg(cid, "🔍 DEBUG: Gemini Pro'ya gönderiliyor...")
-    
     headers = {
         "Content-Type": "application/json",
-        "x-goog-api-key": GEMINI_API_KEY
+        "x-goog-api-key": GEMINI_API_KEY  # ✅ DÜZELTME 10: API anahtarı başlıkta
     }
     
     max_deneme = 3
     for deneme in range(max_deneme):
         try:
-            resp = requests.post(GEMINI_URL, headers=headers, json=payload, timeout=120)
-            send_msg(cid, f"🔍 DEBUG: Gemini HTTP = {resp.status_code}")
+            resp = requests.post(GEMINI_URL, headers=headers, json=payload, timeout=180)
+            print(f"🔍 DEBUG: Gemini HTTP = {resp.status_code}", flush=True)
             
             if resp.status_code == 200:
                 r = resp.json()
-                
-                # Cevabı güvenli şekilde al
                 try:
                     text = r["candidates"][0]["content"]["parts"][0]["text"].strip()
                 except (KeyError, IndexError):
-                    send_msg(cid, "❌ Gemini boş cevap döndü.")
+                    send_msg(cid, "❌ Gemini boş cevap döndü.", parse_mode=None)
                     return None
                 
-                # JSON Temizleme (kod bloklarını kaldır)
+                # JSON Temizleme
                 if "```json" in text:
                     text = text.split("```json")[1].split("```")[0]
                 elif "```" in text:
@@ -175,7 +246,6 @@ def analyze_chart(img_bytes, cid):
                     a = json.loads(text)
                 except json.JSONDecodeError as e:
                     print(f"JSON Hatası, kurtarma deneniyor: {e}", flush=True)
-                    # Metnin içinden { ile } arasını bulup tekrar dene
                     bas = text.find('{')
                     son = text.rfind('}')
                     if bas != -1 and son != -1 and son > bas:
@@ -183,10 +253,10 @@ def analyze_chart(img_bytes, cid):
                             a = json.loads(text[bas:son+1])
                         except Exception as e2:
                             print(f"Kurtarma başarısız: {e2}", flush=True)
-                            send_msg(cid, "❌ Gemini cevabı bozuk JSON içeriyor. Tekrar deneyin.")
+                            send_msg(cid, "❌ Gemini cevabı bozuk JSON içeriyor. Tekrar deneyin.", parse_mode=None)
                             return None
                     else:
-                        send_msg(cid, "❌ Gemini cevabında JSON bulunamadı.")
+                        send_msg(cid, "❌ Gemini cevabında JSON bulunamadı.", parse_mode=None)
                         return None
                 
                 # Güven kontrolü
@@ -207,23 +277,23 @@ def analyze_chart(img_bytes, cid):
                     time.sleep(bekleme_suresi)
                     continue
                 else:
-                    send_msg(cid, "❌ Gemini sunucuları şu an aşırı yoğun. Lütfen birkaç dakika sonra tekrar deneyin.")
+                    send_msg(cid, "❌ Gemini sunucuları şu an aşırı yoğun. Lütfen birkaç dakika sonra tekrar deneyin.", parse_mode=None)
                     return None
             elif resp.status_code == 429:
-                send_msg(cid, "⚠️ Çok fazla istek. 30 saniye bekleyip tekrar deneyin.")
+                send_msg(cid, "⚠️ Çok fazla istek. 30 saniye bekleyip tekrar deneyin.", parse_mode=None)
                 time.sleep(30)
                 continue
             else:
                 hata_detayi = resp.text[:400]
-                send_msg(cid, f"❌ Gemini Hatası ({resp.status_code}): {hata_detayi}")
+                send_msg(cid, f"❌ Gemini Hatası ({resp.status_code}): {hata_detayi}", parse_mode=None)
                 return None
                 
         except Exception as e:
-            send_msg(cid, f"❌ Analiz Hatası: {str(e)}")
+            send_msg(cid, f"❌ Analiz Hatası: {str(e)}", parse_mode=None)
             return None
 
 # ==========================================
-# GÖRSEL PROJEKSİYON ÇİZİMİ (PIL)
+# ✅ DÜZELTME 4: Görsel Projeksiyon Çizimi (Geliştirilmiş Ok Başı)
 # ==========================================
 def draw_projection(img_bytes, yon, puanlar):
     img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
@@ -236,20 +306,18 @@ def draw_projection(img_bytes, yon, puanlar):
         renk = (230, 30, 30)
     else:
         return None
-        
-    n = len(puanlar)
-    if n < 2:
+    
+    # ✅ yol_puani doğrulaması
+    temiz_puanlar = validate_yol_puani(puanlar)
+    if not temiz_puanlar:
         return None
         
+    n = len(temiz_puanlar)
     x1, x2 = int(W * 0.85), int(W * 0.99)
     y_top, y_bot = int(H * 0.10), int(H * 0.90)
     
     noktalar = []
-    for i, p in enumerate(puanlar):
-        try:
-            p = float(p)
-        except:
-            p = 50
+    for i, p in enumerate(temiz_puanlar):
         x = x1 + (x2 - x1) * i / (n - 1)
         y = y_bot - (p / 100.0) * (y_bot - y_top)
         noktalar.append((x, y))
@@ -257,12 +325,20 @@ def draw_projection(img_bytes, yon, puanlar):
     for i in range(len(noktalar) - 1):
         draw.line([noktalar[i], noktalar[i+1]], fill=renk, width=6)
         
+    # ✅ Geliştirilmiş ok başı (polygon ile)
     (xa, ya), (xb, yb) = noktalar[-2], noktalar[-1]
-    a = math.atan2(yb - ya, xb - xa)
-    s = 25
-    for off in (a + math.pi * 0.85, a - math.pi * 0.85):
-        draw.line([(xb, yb), (xb + s * math.cos(off), yb + s * math.sin(off))], fill=renk, width=6)
-        
+    angle = math.atan2(yb - ya, xb - xa)
+    arrow_len = 30
+    arrow_angle = math.pi / 6  # 30 derece
+    
+    p1 = (xb, yb)
+    p2 = (xb - arrow_len * math.cos(angle - arrow_angle), 
+          yb - arrow_len * math.sin(angle - arrow_angle))
+    p3 = (xb - arrow_len * math.cos(angle + arrow_angle), 
+          yb - arrow_len * math.sin(angle + arrow_angle))
+    
+    draw.polygon([p1, p2, p3], fill=renk)
+    
     draw.ellipse([noktalar[0][0]-6, noktalar[0][1]-6, noktalar[0][0]+6, noktalar[0][1]+6], fill=renk)
     
     try:
@@ -278,7 +354,7 @@ def draw_projection(img_bytes, yon, puanlar):
     return buf.getvalue()
 
 # ==========================================
-# MESAJ KARTI
+# MESAJ KARTI (✅ DÜZELTME 5: Boş alan kontrolü)
 # ==========================================
 def build_card(a):
     yon_emoji = {"LONG": "🟢", "SHORT": "🔴", "BEKLE": "🟡"}
@@ -294,8 +370,10 @@ def build_card(a):
     if a.get("yon") != "BEKLE":
         t.append(f"║  💰 GİRİŞ: {a.get('giris','?')}")
         t.append(f"║  🛑 SL:    {a.get('stop_loss','?')}")
-        for i, tp in enumerate(a.get("take_profit", []), 1):
-            t.append(f"║  ✅ TP{i}:   {tp}")
+        tps = a.get("take_profit", [])
+        if tps:
+            for i, tp in enumerate(tps, 1):
+                t.append(f"║  ✅ TP{i}:   {tp}")
         t.append(f"║  ⚖️ R/R:   {a.get('risk_odul','?')}")
     else:
         t.append("║  ⏸️  Şu an net sinyal yok")
@@ -307,35 +385,39 @@ def build_card(a):
     t.append(f"• M1:  {a.get('trend_m1','?')}")
     t.append("")
     t.append("🎯 SEVİYELER")
-    t.append(f"🟢 Destek: {', '.join(map(str, a.get('destekler',[])))}")
-    t.append(f"🔴 Direnç: {', '.join(map(str, a.get('direncler',[])))}")
     
-    if a.get("formasyonlar"):
+    destekler = a.get("destekler", [])
+    direncler = a.get("direncler", [])
+    t.append(f"🟢 Destek: {', '.join(map(str, destekler)) if destekler else 'Belirsiz'}")
+    t.append(f"🔴 Direnç: {', '.join(map(str, direncler)) if direncler else 'Belirsiz'}")
+    
+    formasyonlar = a.get("formasyonlar", [])
+    if formasyonlar:
         t.append("")
-        t.append(f"🧩 Formasyon: {', '.join(a['formasyonlar'])}")
+        t.append(f"🧩 Formasyon: {', '.join(map(str, formasyonlar))}")
         
     t.append("")
     t.append("📝 ÖZET")
-    t.append(a.get('kisa_analiz',''))
+    t.append(escape_md(a.get('kisa_analiz','')))
     t.append("")
     t.append("🔍 GEREKÇELER")
     gerekce_text = a.get("gerekce", "")
-    # Hem \\n hem gerçek newline'ı destekle
-    for g in gerekce_text.replace("\\n", "\n").split("\n"):
+    for g in str(gerekce_text).replace("\\n", "\n").split("\n"):
         if g.strip():
-            t.append(f"• {g.strip()}")
+            t.append(f"• {escape_md(g.strip())}")
             
     t.append("")
-    t.append(f"⚠️ {a.get('uyari','Yatırım tavsiyesi değildir.')}")
+    t.append(f"⚠️ {escape_md(a.get('uyari','Yatırım tavsiyesi değildir.'))}")
     return "\n".join(t)
 
 # ==========================================
-# ANA DÖNGÜ
+# ANA DÖNGÜ (✅ DÜZELTME 7: Kalıcı Offset)
 # ==========================================
 def main():
     threading.Thread(target=run_health_server, daemon=True).start()
+    init_offset_db()
     print(f"=== XAU/USD M1 BOTU BAŞLADI (GEMINI {GEMINI_MODEL}) ===", flush=True)
-    offset = 0
+    offset = get_offset()
     
     while True:
         try:
@@ -344,12 +426,18 @@ def main():
                              
             for u in r.get("result", []):
                 offset = u["update_id"] + 1
+                save_offset(offset)  # ✅ Her update'te offset kaydedilir
+                
                 msg = u.get("message", {})
                 cid = msg.get("chat", {}).get("id")
                 if not cid:
                     continue
 
                 if "photo" in msg:
+                    # ✅ Rate limiting
+                    if not check_rate_limit(cid):
+                        continue
+                    
                     caption = (msg.get("caption") or "").strip()
                     
                     if "XAU" not in caption.upper() and "GOLD" not in caption.upper():
@@ -372,14 +460,19 @@ def main():
                                 gorsel = None
                                 
                             if gorsel:
-                                send_photo(cid, gorsel, caption=kart)
+                                # ✅ Caption 1024'ü aşarsa fotoğraf + ayrı mesaj
+                                if len(kart) > 1024:
+                                    send_photo(cid, gorsel, caption=f"XAU/USD M1 | {a.get('yon')} | %{a.get('guven')}")
+                                    send_msg(cid, kart)
+                                else:
+                                    send_photo(cid, gorsel, caption=kart)
                             else:
                                 send_msg(cid, kart)
                         else:
-                            send_msg(cid, "❌ Analiz başarısız oldu, lütfen tekrar deneyin.")
+                            send_msg(cid, "❌ Analiz başarısız oldu, lütfen tekrar deneyin.", parse_mode=None)
                             
                     except Exception as e:
-                        send_msg(cid, f"❌ Beklenmeyen Hata: {str(e)}")
+                        send_msg(cid, f"❌ Beklenmeyen Hata: {str(e)}", parse_mode=None)
                 else:
                     send_msg(cid,
                         "📸 *XAU/USD M1 Analiz Botu (PRO)*\n\n"
@@ -389,7 +482,8 @@ def main():
                         "3️⃣ Altına (caption) `XAU/USD` yaz.\n\n"
                         "Bot senin için en iyi teknikleri kullanarak analiz edecek, "
                         "giriş/SL/TP seviyelerini verecek ve 2 dakika sonraki tahmini grafiği çizecektir.\n\n"
-                        "⚠️ Yatırım tavsiyesi değildir.")
+                        "⚠️ Yatırım tavsiyesi değildir.",
+                        parse_mode="Markdown")
                         
         except Exception as e:
             print(f"=== LOOP HATASI: {e} ===", flush=True)
