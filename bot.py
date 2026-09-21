@@ -47,6 +47,7 @@ KULLANMAN GEREKEN TÜM TEKNİKLER:
 1. Eğer güven oranın %65'in ALTINDA ise, "yon" alanına MUTLAKA "BEKLE" yaz.
 2. %65 ve üzeri güvende LONG veya SHORT sinyali ver.
 3. KESİNLİKLE örnek JSON'daki değerleri kopyalama, grafiğe göre kendi objektif kararını ver.
+4. Güven oranını %50, %65, %75, %85, %95 gibi gerçekçi ve değişken aralıklarda ver. Sürekli aynı sayıyı verme.
 
 SADECE şu JSON formatında cevap ver, başka hiçbir şey yazma. Örnek değerleri KOPYALAMA:
 
@@ -101,7 +102,7 @@ def get_file_bytes(file_id):
     return requests.get(url, timeout=30).content
 
 # ==========================================
-# GEMINI ANALİZ MOTORU
+# GEMINI ANALİZ MOTORU (503 Hatası İçin Otomatik Tekrar Deneme Eklendi)
 # ==========================================
 def analyze_chart(img_bytes, cid):
     send_msg(cid, "🔍 DEBUG: XAU/USD M1 analiz ediliyor...")
@@ -115,19 +116,12 @@ def analyze_chart(img_bytes, cid):
     del buf
 
     payload = {
-        "contents": [
-            {
-                "parts": [
-                    {"text": PROMPT},
-                    {
-                        "inline_data": {
-                            "mime_type": "image/jpeg",
-                            "data": b64
-                        }
-                    }
-                ]
-            }
-        ],
+        "contents": [{
+            "parts": [
+                {"text": PROMPT},
+                {"inline_data": {"mime_type": "image/jpeg", "data": b64}}
+            ]
+        }],
         "generationConfig": {
             "temperature": 0.2,
             "maxOutputTokens": 1500,
@@ -137,40 +131,52 @@ def analyze_chart(img_bytes, cid):
     del b64
     
     send_msg(cid, "🔍 DEBUG: Gemini'ye gönderiliyor...")
-    
     headers = {"Content-Type": "application/json"}
     
-    try:
-        resp = requests.post(GEMINI_URL, headers=headers, json=payload, timeout=90)
-        send_msg(cid, f"🔍 DEBUG: Gemini HTTP = {resp.status_code}")
-        
-        if resp.status_code != 200:
-            hata_detayi = resp.text[:400] 
-            send_msg(cid, f"❌ Gemini Hatası: {hata_detayi}")
-            return None
-            
-        r = resp.json()
-        text = r["candidates"][0]["content"]["parts"][0]["text"].strip()
-        
-        if text.startswith("```"):
-            text = text.split("```")[1]
-            if text.startswith("json"):
-                text = text[4:]
-        text = text.strip().rstrip("`").strip()
-        
-        a = json.loads(text)
+    max_deneme = 3
+    for deneme in range(max_deneme):
         try:
-            g = int(a.get("guven", 0))
-        except:
-            g = 0
+            resp = requests.post(GEMINI_URL, headers=headers, json=payload, timeout=90)
+            send_msg(cid, f"🔍 DEBUG: Gemini HTTP = {resp.status_code}")
             
-        if g < 65:
-            a["yon"] = "BEKLE"
+            if resp.status_code == 200:
+                r = resp.json()
+                text = r["candidates"][0]["content"]["parts"][0]["text"].strip()
+                
+                if text.startswith("```"):
+                    text = text.split("```")[1]
+                    if text.startswith("json"):
+                        text = text[4:]
+                text = text.strip().rstrip("`").strip()
+                
+                a = json.loads(text)
+                try:
+                    g = int(a.get("guven", 0))
+                except:
+                    g = 0
+                    
+                if g < 65:
+                    a["yon"] = "BEKLE"
+                    
+                return a
             
-        return a
-    except Exception as e:
-        send_msg(cid, f"❌ Analiz Hatası: {str(e)}")
-        return None
+            elif resp.status_code == 503:
+                if deneme < max_deneme - 1:
+                    bekleme_suresi = (deneme + 1) * 10 
+                    send_msg(cid, f"⏳ Gemini şu an çok yoğun. {bekleme_suresi} saniye sonra tekrar denenecek... ({deneme+1}/{max_deneme})")
+                    time.sleep(bekleme_suresi)
+                    continue
+                else:
+                    send_msg(cid, "❌ Gemini sunucuları şu an aşırı yoğun. Lütfen birkaç dakika sonra tekrar deneyin.")
+                    return None
+            else:
+                hata_detayi = resp.text[:400] 
+                send_msg(cid, f"❌ Gemini Hatası: {hata_detayi}")
+                return None
+                
+        except Exception as e:
+            send_msg(cid, f"❌ Analiz Hatası: {str(e)}")
+            return None
 
 # ==========================================
 # GÖRSEL PROJEKSİYON ÇİZİMİ (PIL)
