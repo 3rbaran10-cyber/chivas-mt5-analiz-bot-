@@ -9,8 +9,8 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
-# 404 HATASI İÇİN FLASH MODELİNE DÖNÜLDÜ
-GEMINI_MODEL = "gemini-1.5-flash"
+# ÜCRETLİ SÜRÜM İÇİN PRO MODELİ (404 HATASI İÇİN -latest EKLENDİ)
+GEMINI_MODEL = "gemini-1.5-pro-latest"
 GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
 
 # ==========================================
@@ -102,10 +102,10 @@ def get_file_bytes(file_id):
     return requests.get(url, timeout=30).content
 
 # ==========================================
-# GEMINI ANALİZ MOTORU (JSON Kesilmesini Önleyen Tam Sürüm)
+# GEMINI ANALİZ MOTORU (PRO MODEL + 4096 TOKEN)
 # ==========================================
 def analyze_chart(img_bytes, cid):
-    send_msg(cid, "🔍 DEBUG: XAU/USD M1 analiz ediliyor...")
+    send_msg(cid, "🔍 DEBUG: XAU/USD M1 analiz ediliyor (PRO model)...")
     
     img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
     img.thumbnail((800, 800))
@@ -124,13 +124,13 @@ def analyze_chart(img_bytes, cid):
         }],
         "generationConfig": {
             "temperature": 0.2,
-            "maxOutputTokens": 4096,  # JSON kesilmesini önlemek için 4096 yapıldı
+            "maxOutputTokens": 4096,  # Pro model için JSON kesilmesini önler
             "responseMimeType": "application/json"
         }
     }
     del b64
     
-    send_msg(cid, "🔍 DEBUG: Gemini'ye gönderiliyor...")
+    send_msg(cid, "🔍 DEBUG: Gemini Pro'ya gönderiliyor...")
     headers = {"Content-Type": "application/json"}
     
     max_deneme = 3
