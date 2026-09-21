@@ -11,7 +11,10 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
 # GEMINI'NIN EN GÜNCEL VE HIZLI GÖRSEL MODELİ
 GEMINI_MODEL = "gemini-3.8-flash"
-GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
+# Resmi dokümantasyona göre generateContent hala destekleniyor.
+# Alternatif olarak, daha yeni Interactions API'si de kullanılabilir:
+# GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/interactions"
+GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
 
 # ==========================================
 # RENDER SAĞLIK SUNUCUSU
@@ -102,7 +105,7 @@ def get_file_bytes(file_id):
     return requests.get(url, timeout=30).content
 
 # ==========================================
-# GEMINI ANALİZ MOTORU (503 Hatası İçin Otomatik Tekrar Deneme Eklendi)
+# GEMINI ANALİZ MOTORU (API Anahtarı Başlıkta Gönderiliyor)
 # ==========================================
 def analyze_chart(img_bytes, cid):
     send_msg(cid, "🔍 DEBUG: XAU/USD M1 analiz ediliyor...")
@@ -131,7 +134,12 @@ def analyze_chart(img_bytes, cid):
     del b64
     
     send_msg(cid, "🔍 DEBUG: Gemini'ye gönderiliyor...")
-    headers = {"Content-Type": "application/json"}
+    
+    # API anahtarını başlıkta gönder (resmi yöntem)
+    headers = {
+        "Content-Type": "application/json",
+        "x-goog-api-key": GEMINI_API_KEY
+    }
     
     max_deneme = 3
     for deneme in range(max_deneme):
