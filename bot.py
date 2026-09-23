@@ -13,6 +13,36 @@ GEMINI_MODEL = "gemini-3.1-pro-preview"
 GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
 
 # ==========================================
+# DESTEKLENEN SEMBOLLER (SABİT LİSTE)
+# ==========================================
+ALLOWED_SYMBOLS = [
+    "MAX PainX 1000",
+    "MAX GainX 2000",
+    "MAX PainX 2000",
+    "PainX 1200",
+    "MAX GainX 1000",
+    "PainX 999",
+    "GainX 999",
+    "PainX 600",
+    "PainX 400",
+    "PainX 800",
+    "GainX 800",
+    "GainX 600",
+    "TrendX 1800",
+    "BreakX 1800",
+    "SwitchX 1800",
+    "GainX 1200",
+    "BreakX 1200",
+    "TrendX 1200",
+    "SwitchX 1200",
+    "BreakX 600",
+]
+
+ALLOWED_SYMBOLS_NORM = {
+    s.lower().replace("-", " ").replace("/", " ").strip(): s for s in ALLOWED_SYMBOLS
+}
+
+# ==========================================
 # RENDER SAĞLIK SUNUCUSU
 # ==========================================
 class Health(BaseHTTPRequestHandler):
@@ -28,12 +58,14 @@ def run_health_server():
     HTTPServer(("0.0.0.0", port), Health).serve_forever()
 
 # ==========================================
-# XAU/USD M1 PROMPT (v3 - responseSchema uyumlu)
+# ANALİZ PROMPT (DİNAMİK SEMBOL)
 # ==========================================
-PROMPT = """Sen dünyanın en iyi XAU/USD (Altın) M1 scalping uzmanısın. 15+ yıllık deneyimli profesyonelsin. Smart Money konseptlerini (ICT) derinlemesine bilirsin.
+PROMPT_TEMPLATE = """Sen dünyanın en iyi {sembol} analiz uzmanısın. 15+ yıllık deneyimli profesyonelsin. Smart Money konseptlerini (ICT) derinlemesine bilirsin.
 
-Sana TEK bir XAU/USD M1 grafiği gönderiliyor.
+Sana TEK bir {sembol} M1 grafiği gönderiliyor.
 GÖREV: Grafiği analiz et ve sonraki 2 dakikalık fiyat projeksiyonunu tahmin et.
+EK GÖREV: Fiyatın hangi yönde kaç mum daha devam edeceğini de tahmin et.
+Örnek: "Gain düşüyor, 4-6 mum daha düşebilir" veya "Pain yükseliyor, 3-5 mum daha yükselebilir"
 
 KULLANILACAK TEKNİKLER:
 - Market yapısı: HH/LL, BOS, CHoCH
@@ -44,49 +76,66 @@ KULLANILACAK TEKNİKLER:
 - Fibonacci retracement
 
 PUAN BİRİMİ (ÇOK ÖNEMLİ):
-XAU/USD'de 1 puan = 1.00$ fiyat hareketi kabul edilir. Yani 4340.00'dan 4341.00'a gitmek 1 puandır.
+Bunlar sentetik endeks sembolleridir (PainX, GainX, TrendX, BreakX, SwitchX).
+1 puan = 1.00 fiyat birimi harekettir. Örnek: 104311.468 -> 104312.468 = 1 puan.
+Bu semboller 100.000 civarında işlem görür, bu yüzden SL/TP mesafeleri büyük olmalıdır.
 
 SEVİYE KURALLARI (HİBRİT SİSTEM):
 1. ÖNCE en yakın destek (LONG) veya direnç (SHORT) seviyesini bul.
-2. SL'yi bu seviyenin 0.50-1.00$ ötesine koy.
-3. ANCAK minimum SL mesafesi 2.00$ (2 puan) olmalıdır. Daha dar ASLA olmaz.
-4. Minimum TP1 mesafesi 3.00$ (3 puan), TP2 mesafesi 5.00$ (5 puan).
+2. SL'yi bu seviyenin biraz ötesine koy.
+3. Minimum SL mesafesi bu sentetik endekslerde en az 500 puan (500.00) olmalıdır.
+   Tipik SL mesafesi 800 - 2000 puan arasıdır.
+   Daha dar ASLA olmaz.
+4. Minimum TP1 mesafesi SL'nin 1.5 katı, TP2 2.5 katı olmalı.
+   Yani SL 1000 puan ise TP1 ~1500 puan, TP2 ~2500 puan olmalı.
 5. Spread ve gürültüyü hesaba kat.
-6. R/R 1:1.5'in altındaysa "BEKLE" yaz.
+6. R/R 1:1.5'in altındaysa 'BEKLE' yaz.
 
 KARAR KURALLARI:
-1. Güven %65'in altındaysa "yon" = "BEKLE".
+1. Güven %65'in altındaysa 'yon' = 'BEKLE'.
 2. %65+ güvende LONG veya SHORT.
 3. Güven oranını değişken ver (%50, %65, %75, %85, %95 gibi), sürekli aynı sayıyı verme.
-4. VWAP/FVG/Likidite grafikte net görünmüyorsa "belirsiz" yaz, UYDURMA.
+4. VWAP/FVG/Likidite grafikte net görünmüyorsa 'belirsiz' yaz, UYDURMA.
+
+MUM SAYISI KURALLARI (ÇOK ÖNEMLİ):
+1. Mevcut trendin gücüne göre kaç mum daha devam edeceğini tahmin et.
+2. Güçlü trend + hacim artışı = 5-10 mum
+3. Zayıf trend + hacim düşüşü = 2-4 mum
+4. Yatay/kararsız = 1-3 mum
+5. Sadece TAHMİN ver, kesinlik iddia etme.
+6. hareket_aciklamasi alanı MUTLAKA "Sembol + yön + mum sayısı" içersin.
+   Örnek: "GainX 800 4-6 mum daha düşebilir"
+   Örnek: "PainX 1200 3-5 mum daha yükselebilir"
 
 FORMAT KURALLARI:
-1. JSON içinde ÇİFT TIRNAK (") kullanma, tek tırnak (') kullan.
-2. Satır atlamak için \\n kullan.
-3. Sayılarda NOKTA kullan (4340.50), VİRGÜL kullanma.
-4. SADECE VE SADECE JSON formatında cevap ver. Açıklama, selamlama, giriş cümlesi YAZMA. Doğrudan { ile başla, } ile bitir.
-5. Cevabın MUTLAKA tam ve geçerli JSON olmalı, yarıda KESİLMEMELİ.
+1. SADECE VE SADECE JSON formatında cevap ver.
+2. Sayılarda NOKTA kullan (104311.468), VİRGÜL kullanma.
+3. Cevabın MUTLAKA tam ve geçerli JSON olmalı.
 
 JSON ŞEMASI (SADECE BU ALANLARI DOLDUR):
-- sembol: "XAU/USD"
+- sembol: "{sembol}"
 - yon: "LONG" | "SHORT" | "BEKLE"
 - guven: 0-100 tam sayı
-- giris: "fiyat" (örn: 4340.50)
+- giris: "fiyat"
 - stop_loss: "fiyat"
 - take_profit: ["fiyat1", "fiyat2"]
 - risk_odul: "1:2.0"
 - trend_m1: "yükseliş" | "düşüş" | "yatay"
 - vwap_durumu: "fiyat VWAP üstünde" | "VWAP altında" | "belirsiz"
-- fvg_tespit: "FVG açıklama" | "yok" | "belirsiz"
-- likidite_durumu: "Sweep açıklama" | "yok" | "belirsiz"
+- fvg_tespit: "açıklama" | "yok" | "belirsiz"
+- likidite_durumu: "açıklama" | "yok" | "belirsiz"
 - destekler: ["fiyat1", "fiyat2"]
 - direncler: ["fiyat1", "fiyat2"]
 - formasyonlar: ["formasyon1"]
 - kullanilan_teknikler: ["teknik1", "teknik2"]
 - kisa_analiz: "2-3 cümle net özet"
 - gerekce: "Madde 1\\nMadde 2\\nMadde 3"
-- yol_puani: [50, 45, 60, 55, 40, 30, 20] (5-8 nokta, 0-100 arası)
-- uyari: "Yatırım tavsiyesi değildir."
+- yol_puani: [50, 45, 60, 55, 40, 30, 20]
+- kalan_mum: 0-20 arası tam sayı (kaç mum daha bu yönde devam eder)
+- mum_yonu: "yükseliş" | "düşüş" | "yatay"
+- hareket_aciklamasi: "Sembol + yön + kaç mum" formatında kısa cümle
+- sonraki_hamle: "Bu hareket bittikten sonra ne olur" (1 cümle)
+- uyari: "Mum sayısı tahminidir, kesinlik içermez. Yatırım tavsiyesi değildir."
 
 Türkçe yaz."""
 
@@ -151,21 +200,10 @@ def get_file_bytes(file_id):
     url = f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/{r['result']['file_path']}"
     return requests.get(url, timeout=30).content
 
-def escape_md(text):
-    """✅ DÜZELTME: Artık silmiyor, gerçekten kaçırıyor"""
-    if not isinstance(text, str):
-        text = str(text)
-    # Markdown V1 için: _ * ` [ kaçır
-    for ch in ['_', '*', '`', '[']:
-        text = text.replace(ch, '\\' + ch)
-    return text
-
 def temizle_sayi(deger):
-    """✅ DÜZELTME: Türkçe virgüllü ondalık -> nokta"""
     if deger is None:
         return deger
     s = str(deger).strip()
-    # Eğer virgül varsa ve nokta yoksa virgülü nokta yap
     if ',' in s and '.' not in s:
         s = s.replace(',', '.')
     return s
@@ -182,6 +220,23 @@ def validate_yol_puani(puanlar):
         except (ValueError, TypeError):
             continue
     return temiz if len(temiz) >= 2 else None
+
+def caption_to_symbol(caption):
+    """Caption'dan desteklenen sembollerden birini çıkarır."""
+    if not caption:
+        return None
+    norm = caption.lower().replace("-", " ").replace("/", " ").strip()
+    norm = re.sub(r"\s+", " ", norm)
+
+    for key, orijinal in ALLOWED_SYMBOLS_NORM.items():
+        if norm == key or norm.startswith(key + " ") or norm.endswith(" " + key) or (" " + key + " ") in (" " + norm + " "):
+            return orijinal
+
+    for key, orijinal in ALLOWED_SYMBOLS_NORM.items():
+        if key in norm:
+            return orijinal
+
+    return None
 
 # ==========================================
 # RATE LIMITING
@@ -200,23 +255,25 @@ def check_rate_limit(cid):
     return True
 
 # ==========================================
-# GEMINI ANALİZ MOTORU (responseSchema ile)
+# GEMINI ANALİZ MOTORU
 # ==========================================
-def analyze_chart(img_bytes, cid):
-    print(f"🔍 DEBUG: Analiz başladı (Model: {GEMINI_MODEL})", flush=True)
+def analyze_chart(img_bytes, cid, sembol):
+    print(f"🔍 DEBUG: Analiz başladı (Model: {GEMINI_MODEL}, Sembol: {sembol})", flush=True)
     
     img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
-    img.thumbnail((800, 800))
+    img.thumbnail((1400, 1400))
     buf = io.BytesIO()
-    img.save(buf, format="JPEG", quality=70)
+    img.save(buf, format="JPEG", quality=80)
     b64 = base64.b64encode(buf.getvalue()).decode()
     del img
     del buf
 
+    prompt = PROMPT_TEMPLATE.format(sembol=sembol)
+
     payload = {
         "contents": [{
             "parts": [
-                {"text": PROMPT},
+                {"text": prompt},
                 {"inline_data": {"mime_type": "image/jpeg", "data": b64}}
             ]
         }],
@@ -245,9 +302,14 @@ def analyze_chart(img_bytes, cid):
                     "kisa_analiz": {"type": "string"},
                     "gerekce": {"type": "string"},
                     "yol_puani": {"type": "array", "items": {"type": "number"}},
+                    "kalan_mum": {"type": "integer"},
+                    "mum_yonu": {"type": "string"},
+                    "hareket_aciklamasi": {"type": "string"},
+                    "sonraki_hamle": {"type": "string"},
                     "uyari": {"type": "string"}
                 },
-                "required": ["sembol", "yon", "guven", "kisa_analiz", "gerekce", "yol_puani"]
+                "required": ["sembol", "yon", "guven", "kisa_analiz", "gerekce", "yol_puani",
+                             "kalan_mum", "mum_yonu", "hareket_aciklamasi"]
             }
         }
     }
@@ -269,10 +331,9 @@ def analyze_chart(img_bytes, cid):
                 try:
                     text = r["candidates"][0]["content"]["parts"][0]["text"].strip()
                 except (KeyError, IndexError):
-                    send_msg(cid, "❌ Gemini boş cevap döndü.", parse_mode=None)
+                    send_msg(cid, "❌ Gemini boş cevap döndü.")
                     return None
                 
-                # Kod bloğu temizleme
                 if "```json" in text:
                     text = text.split("```json")[1].split("```")[0]
                 elif "```" in text:
@@ -283,7 +344,6 @@ def analyze_chart(img_bytes, cid):
                             text = text[4:]
                 text = text.strip()
 
-                # JSON okuma
                 a = None
                 try:
                     a = json.loads(text)
@@ -296,20 +356,18 @@ def analyze_chart(img_bytes, cid):
                             a = json.loads(text[bas:son+1])
                         except Exception as e2:
                             print(f"Kurtarma başarısız: {e2}", flush=True)
-                            send_msg(cid, "❌ Gemini cevabı bozuk JSON. Tekrar deneyin.", parse_mode=None)
+                            send_msg(cid, "❌ Gemini cevabı bozuk JSON. Tekrar deneyin.")
                             return None
                     else:
-                        send_msg(cid, "❌ Gemini cevabında JSON yok. Tekrar deneyin.", parse_mode=None)
+                        send_msg(cid, "❌ Gemini cevabında JSON yok. Tekrar deneyin.")
                         return None
                 
-                # Sayısal alanları temizle
                 for k in ["giris", "stop_loss"]:
                     if k in a:
                         a[k] = temizle_sayi(a[k])
                 if "take_profit" in a and isinstance(a["take_profit"], list):
                     a["take_profit"] = [temizle_sayi(x) for x in a["take_profit"]]
                 
-                # Güven kontrolü
                 try:
                     g = int(a.get("guven", 0))
                 except:
@@ -326,25 +384,25 @@ def analyze_chart(img_bytes, cid):
                     time.sleep(bekleme)
                     continue
                 else:
-                    send_msg(cid, "❌ Gemini şu an aşırı yoğun. Sonra deneyin.", parse_mode=None)
+                    send_msg(cid, "❌ Gemini şu an aşırı yoğun. Sonra deneyin.")
                     return None
             elif resp.status_code == 429:
-                send_msg(cid, "⚠️ Çok fazla istek. 30 sn bekleyin.", parse_mode=None)
+                send_msg(cid, "⚠️ Çok fazla istek. 30 sn bekleyin.")
                 time.sleep(30)
                 continue
             else:
                 hata = resp.text[:400]
-                send_msg(cid, f"❌ Gemini Hatası ({resp.status_code}): {hata}", parse_mode=None)
+                send_msg(cid, f"❌ Gemini Hatası ({resp.status_code}): {hata}")
                 return None
                 
         except Exception as e:
-            send_msg(cid, f"❌ Analiz Hatası: {str(e)[:200]}", parse_mode=None)
+            send_msg(cid, f"❌ Analiz Hatası: {str(e)[:200]}")
             return None
 
 # ==========================================
 # GÖRSEL PROJEKSİYON
 # ==========================================
-def draw_projection(img_bytes, yon, puanlar):
+def draw_projection(img_bytes, yon, puanlar, sembol="XAU/USD"):
     img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
     W, H = img.size
     draw = ImageDraw.Draw(img)
@@ -361,8 +419,8 @@ def draw_projection(img_bytes, yon, puanlar):
         return None
         
     n = len(temiz)
-    x1, x2 = int(W * 0.85), int(W * 0.99)
-    y_top, y_bot = int(H * 0.10), int(H * 0.90)
+    x1, x2 = int(W * 0.80), int(W * 0.98)
+    y_top, y_bot = int(H * 0.15), int(H * 0.85)
     
     noktalar = []
     for i, p in enumerate(temiz):
@@ -388,12 +446,18 @@ def draw_projection(img_bytes, yon, puanlar):
     draw.ellipse([noktalar[0][0]-6, noktalar[0][1]-6,
                   noktalar[0][0]+6, noktalar[0][1]+6], fill=renk)
     
+    # Font: resim yüksekliğine göre ölçekle
+    font_size = max(20, int(H * 0.035))
     try:
-        font = ImageFont.truetype("arial.ttf", 30)
+        font = ImageFont.truetype("arial.ttf", font_size)
     except:
-        font = ImageFont.load_default()
+        try:
+            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", font_size)
+        except:
+            font = ImageFont.load_default()
         
-    draw.text((20, 20), f"XAU/USD M1 | {yon} | 2 Dk Projeksiyon", fill=renk, font=font)
+    # Yazıyı SOL ALTA koy (üstteki başlıkla çakışmasın)
+    draw.text((20, H - 60), f"{sembol} | {yon} | 2 Dk Projeksiyon", fill=renk, font=font)
 
     buf = io.BytesIO()
     img.save(buf, format="PNG")
@@ -402,12 +466,12 @@ def draw_projection(img_bytes, yon, puanlar):
 # ==========================================
 # MESAJ KARTI
 # ==========================================
-def build_card(a):
+def build_card(a, sembol="XAU/USD"):
     yon_emoji = {"LONG": "🟢", "SHORT": "🔴", "BEKLE": "🟡"}
     e = yon_emoji.get(a.get("yon","BEKLE"), "⚪")
     t = []
     t.append("╔══════════════════════════╗")
-    t.append(f"║  📊 XAU/USD M1 ANALİZİ (PRO)")
+    t.append(f"║  📊 {sembol} ANALİZİ (PRO)")
     t.append("╠══════════════════════════╣")
     t.append(f"║  {e} YÖN: {a.get('yon','?')}")
     t.append(f"║  🎯 GÜVEN: %{a.get('guven','?')}")
@@ -428,11 +492,11 @@ def build_card(a):
     t.append("╚══════════════════════════╝")
     t.append("")
     t.append("📈 TREND ANALİZİ")
-    t.append(f"• M1:  {escape_md(a.get('trend_m1','?'))}")
+    t.append(f"• M1:  {a.get('trend_m1','?')}")
     
     vwap = a.get("vwap_durumu", "")
     if vwap and vwap.lower() not in ["belirsiz", ""]:
-        t.append(f"• VWAP: {escape_md(vwap)}")
+        t.append(f"• VWAP: {vwap}")
     
     t.append("")
     t.append("🎯 SEVİYELER")
@@ -445,9 +509,9 @@ def build_card(a):
     likidite = a.get("likidite_durumu", "")
     sm = []
     if fvg and fvg.lower() not in ["yok", "belirsiz", ""]:
-        sm.append(f"📦 FVG: {escape_md(fvg)}")
+        sm.append(f"📦 FVG: {fvg}")
     if likidite and likidite.lower() not in ["yok", "belirsiz", ""]:
-        sm.append(f"💧 Likidite: {escape_md(likidite)}")
+        sm.append(f"💧 Likidite: {likidite}")
     if sm:
         t.append("")
         t.append("🧠 SMART MONEY")
@@ -457,19 +521,35 @@ def build_card(a):
     formasyonlar = a.get("formasyonlar", [])
     if formasyonlar:
         t.append("")
-        t.append(f"🧩 Formasyon: {escape_md(', '.join(map(str, formasyonlar)))}")
-        
+        t.append(f"🧩 Formasyon: {', '.join(map(str, formasyonlar))}")
+    
+    # ⏱️ MUM TAHMİNİ
+    kalan = a.get("kalan_mum", 0)
+    mum_yonu = a.get("mum_yonu", "")
+    hareket = a.get("hareket_aciklamasi", "")
+    sonraki = a.get("sonraki_hamle", "")
+    
+    if kalan or hareket:
+        t.append("")
+        t.append("⏱️ MUM TAHMİNİ")
+        if hareket:
+            t.append(f"• {hareket}")
+        elif kalan and mum_yonu:
+            t.append(f"• {mum_yonu.capitalize()} yönünde ~{kalan} mum")
+        if sonraki:
+            t.append(f"• Sonrası: {sonraki}")
+    
     t.append("")
     t.append("📝 ÖZET")
-    t.append(escape_md(a.get('kisa_analiz','')))
+    t.append(a.get('kisa_analiz',''))
     t.append("")
     t.append("🔍 GEREKÇELER")
     for g in str(a.get("gerekce", "")).replace("\\n", "\n").split("\n"):
         if g.strip():
-            t.append(f"• {escape_md(g.strip())}")
+            t.append(f"• {g.strip()}")
             
     t.append("")
-    t.append(f"⚠️ {escape_md(a.get('uyari','Yatırım tavsiyesi değildir.'))}")
+    t.append(f"⚠️ {a.get('uyari','Yatırım tavsiyesi değildir.')}")
     return "\n".join(t)
 
 # ==========================================
@@ -478,7 +558,7 @@ def build_card(a):
 def main():
     threading.Thread(target=run_health_server, daemon=True).start()
     init_offset_db()
-    print(f"=== XAU/USD M1 BOTU BAŞLADI (GEMINI {GEMINI_MODEL}) ===", flush=True)
+    print(f"=== SENTETİK ENDEKS ANALİZ BOTU BAŞLADI (GEMINI {GEMINI_MODEL}) ===", flush=True)
     offset = get_offset()
     
     while True:
@@ -500,46 +580,52 @@ def main():
                         continue
                     
                     caption = (msg.get("caption") or "").strip()
+                    sembol = caption_to_symbol(caption)
                     
-                    if "XAU" not in caption.upper() and "GOLD" not in caption.upper():
-                        send_msg(cid, "⚠️ Lütfen XAU/USD grafiği gönderin ve altına `XAU/USD` yazın.")
+                    if not sembol:
+                        ornek = ", ".join(ALLOWED_SYMBOLS[:3])
+                        send_msg(cid, f"⚠️ Lütfen fotoğrafın altına sembolü tam yazın.\nÖrnek: `{ornek}` ...")
                         continue
                         
                     fid = msg["photo"][-1]["file_id"]
-                    send_msg(cid, "⏳ Grafik alındı, analiz ediliyor...")
+                    send_msg(cid, f"⏳ {sembol} grafiği alındı, analiz ediliyor...")
                     
                     try:
                         img_bytes = get_file_bytes(fid)
-                        a = analyze_chart(img_bytes, cid)
+                        a = analyze_chart(img_bytes, cid, sembol)
                         
                         if a:
-                            kart = build_card(a)
+                            kart = build_card(a, sembol)
                             
                             if a.get("yon") != "BEKLE":
-                                gorsel = draw_projection(img_bytes, a.get("yon"), a.get("yol_puani", []))
+                                gorsel = draw_projection(img_bytes, a.get("yon"), a.get("yol_puani", []), sembol)
                             else:
                                 gorsel = None
                                 
                             if gorsel:
                                 if len(kart) > 1024:
-                                    send_photo(cid, gorsel, caption=f"XAU/USD M1 | {a.get('yon')} | %{a.get('guven')}")
+                                    send_photo(cid, gorsel, caption=f"{sembol} | {a.get('yon')} | %{a.get('guven')}")
                                     send_msg(cid, kart)
                                 else:
                                     send_photo(cid, gorsel, caption=kart)
                             else:
                                 send_msg(cid, kart)
                         else:
-                            send_msg(cid, "❌ Analiz başarısız, tekrar deneyin.", parse_mode=None)
+                            send_msg(cid, "❌ Analiz başarısız, tekrar deneyin.")
                             
                     except Exception as e:
-                        send_msg(cid, f"❌ Hata: {str(e)[:200]}", parse_mode=None)
+                        send_msg(cid, f"❌ Hata: {str(e)[:200]}")
                 else:
+                    sembol_listesi = "\n".join([f"• {s}" for s in ALLOWED_SYMBOLS])
                     send_msg(cid,
-                        "📸 *XAU/USD M1 Analiz Botu (PRO v3)*\n\n"
+                        "📸 *Sentetik Endeks Analiz Botu (PRO v3)*\n\n"
                         "Kullanım:\n"
-                        "1️⃣ MT5'ten XAU/USD M1 grafiği ekran görüntüsü al\n"
+                        "1️⃣ Grafiğin ekran görüntüsünü al\n"
                         "2️⃣ Fotoğrafı bota gönder\n"
-                        "3️⃣ Altına `XAU/USD` yaz\n\n"
+                        "3️⃣ Altına sembolü tam yaz\n"
+                        "   Örnek: `MAX PainX 1000`, `GainX 800`, `TrendX 1800`\n\n"
+                        "Desteklenen semboller:\n"
+                        f"{sembol_listesi}\n\n"
                         "⚠️ Yatırım tavsiyesi değildir.",
                         parse_mode="Markdown")
                         
