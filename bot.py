@@ -27,7 +27,7 @@ ALLOWED_SYMBOLS_NORM = {
 }
 
 # ==========================================
-# HEALTH SERVER (Render için)
+# HEALTH SERVER
 # ==========================================
 class Health(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -42,7 +42,7 @@ def run_health_server():
     HTTPServer(("0.0.0.0", port), Health).serve_forever()
 
 # ==========================================
-# PROMPT (TEKLİ FOTO - İçinde M30+M15+M1 olabilir)
+# PROMPT (TEKLİ FOTO)
 # ==========================================
 PROMPT_TEMPLATE = """Sen dünyanın en iyi {sembol} analiz uzmanısın. 15+ yıllık deneyimli profesyonelsin. Smart Money konseptlerini (ICT) derinlemesine bilirsin.
 
@@ -439,13 +439,10 @@ def check_rate_limit(cid):
 # SL/TP MANTIK FİLTRESİ (ATR TABANLI)
 # ==========================================
 def sl_tp_makul_mu(a):
-    """SL ve TP mesafeleri ATR'ye göre mantıklı mı kontrol et."""
     try:
         g = float(str(a.get("giris", "0")).replace(",", "."))
         s = float(str(a.get("stop_loss", "0")).replace(",", "."))
         atr = float(a.get("m1_atr") or 0)
-
-        # ATR yoksa fiyat seviyesinden tahmin et
         if atr < 1:
             if g > 50000:
                 atr = 40
@@ -457,14 +454,11 @@ def sl_tp_makul_mu(a):
                 atr = 1
 
         sl_fark = abs(g - s)
-
-        # SL: ATR x 0.8 ile ATR x 6 arası olmalı
         if sl_fark > atr * 6:
             return False, f"SL çok uzak ({sl_fark:.0f} puan, ATR={atr:.0f})"
         if sl_fark < atr * 0.8:
             return False, f"SL çok kısa ({sl_fark:.0f} puan, ATR={atr:.0f})"
 
-        # TP'ler SL'nin 1.2x - 4x arası olmalı
         tps = a.get("take_profit") or []
         for i, tp in enumerate(tps, 1):
             try:
@@ -476,7 +470,6 @@ def sl_tp_makul_mu(a):
                     return False, f"TP{i} çok kısa ({tp_fark:.0f} puan)"
             except:
                 continue
-
         return True, ""
     except Exception:
         return True, ""
@@ -503,7 +496,8 @@ def analyze_chart(images_bytes_list, cid, sembol, coklu=False):
         "contents": [{"parts": parts}],
         "generationConfig": {
             "temperature": 0.3,
-            "maxOutputTokens": 4000,
+            "maxOutputTokens": 16000,
+            "thinkingConfig": {"thinkingBudget": 1024},
             "responseMimeType": "application/json",
             "responseSchema": {
                 "type": "object",
@@ -561,7 +555,13 @@ def analyze_chart(images_bytes_list, cid, sembol, coklu=False):
                 try:
                     text = r["candidates"][0]["content"]["parts"][0]["text"].strip()
                 except (KeyError, IndexError):
-                    send_msg(cid, "❌ Gemini boş cevap döndü.")
+                    # finishReason'ı yakala
+                    try:
+                        fr = r["candidates"][0].get("finishReason", "?")
+                    except:
+                        fr = "?"
+                    print(f"❌ Boş cevap. finishReason={fr}", flush=True)
+                    send_msg(cid, f"❌ Gemini boş cevap döndü. (Sebep: {fr})")
                     return None
 
                 if "```json" in text:
@@ -584,10 +584,18 @@ def analyze_chart(images_bytes_list, cid, sembol, coklu=False):
                             a = json.loads(text[bas:son+1])
                         except Exception as e2:
                             print(f"Kurtarma başarısız: {e2}", flush=True)
+                            print(f"❌ Ham cevap: {text[:600]}", flush=True)
                             send_msg(cid, "❌ Gemini cevabı bozuk JSON.")
                             return None
                     else:
-                        send_msg(cid, "❌ Gemini cevabında JSON yok.")
+                        # finishReason logla
+                        try:
+                            fr = r["candidates"][0].get("finishReason", "?")
+                        except:
+                            fr = "?"
+                        print(f"❌ JSON YOK. finishReason={fr}", flush=True)
+                        print(f"❌ Ham cevap: {text[:600]}", flush=True)
+                        send_msg(cid, f"❌ Gemini JSON vermedi. (Sebep: {fr})")
                         return None
 
                 for k in ["giris", "stop_loss"]:
@@ -603,7 +611,7 @@ def analyze_chart(images_bytes_list, cid, sembol, coklu=False):
                 if g < 65:
                     a["yon"] = "BEKLE"
 
-                # SL/TP mantık kontrolü (ATR tabanlı)
+                # SL/TP mantık kontrolü
                 ok, sebep = sl_tp_makul_mu(a)
                 if not ok and a.get("yon") in ("LONG", "SHORT"):
                     print(f"⚠️ {sebep} → BEKLE'ye çevrildi", flush=True)
@@ -634,7 +642,7 @@ def analyze_chart(images_bytes_list, cid, sembol, coklu=False):
             return None
 
 # ==========================================
-# PROJEKSİYON ÇİZİMİ (M1 BÖLGESİNE)
+# PROJEKSİYON ÇİZİMİ
 # ==========================================
 def draw_projection(img_bytes, yon, puanlar, sembol="XAU/USD", m1_bolge=None):
     img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
@@ -652,7 +660,6 @@ def draw_projection(img_bytes, yon, puanlar, sembol="XAU/USD", m1_bolge=None):
     if not temiz:
         return None
 
-    # M1 bölgesi (yüzde → piksel)
     if m1_bolge and all(k in m1_bolge for k in ["x", "y", "w", "h"]):
         try:
             bx = int(W * float(m1_bolge["x"]) / 100)
@@ -671,7 +678,6 @@ def draw_projection(img_bytes, yon, puanlar, sembol="XAU/USD", m1_bolge=None):
         print("⚠️ m1_bolge yok, tüm görsele çiziliyor", flush=True)
         bx, by, bw, bh = 0, 0, W, H
 
-    # M1 bölgesinin sağ %20'sine çiz
     x1 = bx + int(bw * 0.80)
     x2 = bx + int(bw * 0.98)
     y_top = by + int(bh * 0.15)
@@ -950,7 +956,7 @@ def handle_command(cid, text):
     send_msg(cid, "ℹ️ Fotoğraf at ve altına sembol yaz. Menü için /menu")
 
 # ==========================================
-# CALLBACK (BUTON TIKLAMA)
+# CALLBACK
 # ==========================================
 def handle_callback(cq):
     try:
@@ -1062,7 +1068,7 @@ def process_analysis(cid, images_bytes_list, sembol, coklu):
 def main():
     threading.Thread(target=run_health_server, daemon=True).start()
     init_db()
-    print(f"=== SENTETİK ANALİZ BOTU v5 BAŞLADI (GEMINI {GEMINI_MODEL}) ===", flush=True)
+    print(f"=== SENTETİK ANALİZ BOTU v6 BAŞLADI (GEMINI {GEMINI_MODEL}) ===", flush=True)
     offset = get_offset()
 
     while True:
@@ -1083,7 +1089,6 @@ def main():
                 if not cid:
                     continue
 
-                # Fotoğraf
                 if "photo" in msg:
                     mgid = msg.get("media_group_id")
                     if mgid:
@@ -1103,7 +1108,6 @@ def main():
                             send_msg(cid, f"❌ Hata: {str(e)[:200]}")
                     continue
 
-                # Metin komutu
                 text = msg.get("text", "")
                 if text:
                     handle_command(cid, text)
@@ -1112,7 +1116,6 @@ def main():
                 if not text and "photo" not in msg:
                     send_msg(cid, "ℹ️ Fotoğraf at ve altına sembol yaz. Menü için /menu")
 
-            # Albümleri işle
             for mgid, data in get_ready_albums():
                 try:
                     photos = data["photos"]
