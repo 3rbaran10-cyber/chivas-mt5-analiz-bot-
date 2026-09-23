@@ -42,20 +42,25 @@ def run_health_server():
     HTTPServer(("0.0.0.0", port), Health).serve_forever()
 
 # ==========================================
-# PROMPT (TEKLİ FOTO)
+# PROMPT (TEKLİ FOTO - İçinde M30+M15+M1 olabilir)
 # ==========================================
 PROMPT_TEMPLATE = """Sen dünyanın en iyi {sembol} analiz uzmanısın. 15+ yıllık deneyimli profesyonelsin. Smart Money konseptlerini (ICT) derinlemesine bilirsin.
 
-Sana {sembol} için bir MT5 ekran görüntüsü gönderiliyor. Bu görsel TEK grafik olabilir veya BÖLÜNMÜŞ ekran olabilir (M30, M15, M1 yan yana).
+Sana {sembol} için BİR MT5 ekran görüntüsü gönderiliyor. Bu TEK bir fotoğraftır ama içinde YAN YANA bölünmüş 3 grafik olabilir: M30, M15, M1.
 
 GÖREV:
-1. Görselde kaç zaman dilimi olduğunu tespit et (sol üstteki M15, M30, M1 etiketlerini oku).
-2. Kaç TF varsa hepsini birlikte değerlendir:
-   - M30 varsa → ana trend
-   - M15 varsa → orta vade yapı
-   - M1 varsa → giriş tetikleyicisi
-3. Sonraki 2 dakikalık fiyat projeksiyonunu tahmin et.
+1. Görselde kaç zaman dilimi olduğunu tespit et (sol üstteki M30, M15, M1 etiketlerini oku).
+2. Tüm TF'leri birlikte değerlendir:
+   - M30 → ana trend yönü
+   - M15 → orta vade yapı ve onay
+   - M1  → GİRİŞ/SL/TP için TEK referans (asıl işlem burada)
+3. Sonraki 2 dakikalık fiyat projeksiyonunu tahmin et (2 dakika = 2 M1 mumu).
 4. Fiyatın hangi yönde kaç M1 mumu daha devam edeceğini tahmin et.
+
+TREND vs İŞLEM KURALI:
+- M30 ve M15 SADECE TREND ONAYI için kullanılır.
+- GİRİŞ, STOP LOSS ve TAKE PROFIT SADECE M1 yapısına göre verilir.
+- M30/M15 ile M1 çelişiyorsa → 'BEKLE'.
 
 KULLANILACAK TEKNİKLER:
 - Market yapısı: HH/LL, BOS, CHoCH
@@ -65,16 +70,25 @@ KULLANILACAK TEKNİKLER:
 - Mum formasyonları (engulfing, pin bar, doji, hammer)
 - Fibonacci retracement
 
-PUAN BİRİMİ (ÇOK ÖNEMLİ):
-Bunlar sentetik endeks sembolleridir. 1 puan = 1.00 fiyat birimi harekettir.
-Bu semboller 100.000 civarında işlem görür, SL/TP mesafeleri büyük olmalıdır.
+VOLATİLİTE ÖLÇÜMÜ (İLK İŞ):
+M1 grafiğinde son 20 mumu incele.
+Ortalama mum boyutunu (high - low) puan cinsinden tahmin et.
+Bunu JSON'a "m1_atr" olarak yaz.
+TÜM SL/TP kararlarını SADECE bu değere göre ver.
 
-SEVİYE KURALLARI:
-1. ÖNCE en yakın destek (LONG) veya direnç (SHORT) seviyesini bul.
-2. SL'yi bu seviyenin biraz ötesine koy.
-3. Minimum SL mesafesi en az 500 puan. Tipik 800-2000 puan.
-4. Minimum TP1 = SL x 1.5, TP2 = SL x 2.5.
-5. R/R 1:1.5 altındaysa 'BEKLE' yaz.
+SEVİYE KURALLARI (ORAN TABANLI, SABİT PUAN YOK):
+1. SL mesafesi = m1_atr x 1.5 ile m1_atr x 3 arası olsun. SL'yi KISA tut.
+2. SL = M1'deki en yakın yapısal seviyenin (swing low/high, order block) hemen ötesi — ama yukarıdaki oranı koru.
+3. TP1 = SL mesafesi x 1.5
+4. TP2 = SL mesafesi x 2.5
+5. M1'de yakın yapısal seviye yoksa → 'BEKLE'.
+6. R/R 1:1.5 altındaysa → 'BEKLE'.
+
+ÖRNEK MANTIK (sadece oran, kopyalama):
+- m1_atr = 40 ise  → SL ≈ 60-120,  TP1 ≈ 90-180,  TP2 ≈ 150-300
+- m1_atr = 5 ise   → SL ≈ 8-15,    TP1 ≈ 12-22,   TP2 ≈ 20-38
+- m1_atr = 200 ise → SL ≈ 300-600, TP1 ≈ 450-900, TP2 ≈ 750-1500
+Formül hep aynı, sadece ATR değişir.
 
 KARAR KURALLARI:
 1. Güven %65 altındaysa 'yon' = 'BEKLE'.
@@ -82,7 +96,7 @@ KARAR KURALLARI:
 3. M30 ve M15 çelişiyorsa → güven düşür veya 'BEKLE' ver.
 4. Sadece M1 varsa → normal M1 analizi yap.
 
-MUM SAYISI: trendin gücüne göre 1-10 mum arası tahmin.
+MUM SAYISI: M1 grafiğinde 2 dakika = 2 mum. Bu yüzden 1-3 arası ver. 5+ verme.
 
 M1 BÖLGE TESPİTİ (ÇOK ÖNEMLİ):
 Görselde M1 grafiğinin ekrandaki konumunu YÜZDE olarak bul:
@@ -98,6 +112,7 @@ FORMAT: SADECE geçerli JSON. Sayılarda NOKTA kullan. Türkçe yaz.
 JSON ŞEMASI:
 - sembol, yon ("LONG"|"SHORT"|"BEKLE"), guven (0-100)
 - giris, stop_loss, take_profit (array), risk_odul
+- m1_atr (integer, M1 ortalama mum boyutu)
 - trend_m1, vwap_durumu, fvg_tespit, likidite_durumu
 - destekler (array), direncler (array), formasyonlar (array)
 - kullanilan_teknikler (array)
@@ -116,11 +131,16 @@ Sana {sembol} için birden fazla zaman diliminde grafik gönderiliyor.
 GÖREV:
 1. Hangi grafiğin hangi TF olduğunu sol üst köşedeki etiketlerden (M30, M15, M1) OKU.
 2. En büyük TF'den en küçüğe sırala (M30 → M15 → M1).
-3. M30 ana trend, M15 orta yapı, M1 tetikleyici olarak değerlendir.
+3. M30 ana trend, M15 orta yapı, M1 tetikleyici.
 4. Üçünü birleştirerek sonraki 2 dakikalık fiyat projeksiyonunu ver.
 5. Fiyatın hangi yönde kaç M1 mumu daha devam edeceğini tahmin et.
 
-ÇOKLU ZAMAN DİLİMİ KURALLARI:
+TREND vs İŞLEM KURALI:
+- M30 ve M15 SADECE TREND ONAYI için kullanılır.
+- GİRİŞ, STOP LOSS ve TAKE PROFIT SADECE M1 yapısına göre verilir.
+- M30/M15 ile M1 çelişiyorsa → 'BEKLE'.
+
+ÇOKLU TF KURALLARI:
 - M30 ve M15 aynı yön → güven yüksek (%75-90)
 - M30 ve M15 çelişiyor → 'BEKLE'
 - M1 tetikleyici yoksa → 'BEKLE'
@@ -134,34 +154,41 @@ KULLANILACAK TEKNİKLER:
 - Mum formasyonları
 - Fibonacci retracement
 
-PUAN BİRİMİ:
-1 puan = 1.00 fiyat birimi. Bu semboller 100.000 civarında işlem görür.
+VOLATİLİTE ÖLÇÜMÜ (İLK İŞ):
+M1 grafiğinde son 20 mumu incele.
+Ortalama mum boyutunu (high - low) puan cinsinden tahmin et.
+Bunu JSON'a "m1_atr" olarak yaz.
+TÜM SL/TP kararlarını SADECE bu değere göre ver.
 
-SEVİYE KURALLARI:
-1. En yakın destek (LONG) veya direnç (SHORT) seviyesini bul.
-2. SL bu seviyenin ötesine.
-3. Minimum SL 500 puan. Tipik 800-2000 puan.
-4. TP1 = SL x 1.5, TP2 = SL x 2.5.
-5. R/R 1:1.5 altındaysa 'BEKLE'.
+SEVİYE KURALLARI (ORAN TABANLI, SABİT PUAN YOK):
+1. SL mesafesi = m1_atr x 1.5 ile m1_atr x 3 arası olsun. SL'yi KISA tut.
+2. SL = M1'deki en yakın yapısal seviyenin hemen ötesi.
+3. TP1 = SL x 1.5, TP2 = SL x 2.5.
+4. M1'de yakın yapısal seviye yoksa → 'BEKLE'.
+5. R/R 1:1.5 altındaysa → 'BEKLE'.
+
+ÖRNEK MANTIK (sadece oran):
+- m1_atr = 40 ise → SL ≈ 60-120, TP1 ≈ 90-180, TP2 ≈ 150-300
+- m1_atr = 5 ise  → SL ≈ 8-15, TP1 ≈ 12-22, TP2 ≈ 20-38
 
 KARAR KURALLARI:
 1. Güven %65 altı → 'BEKLE'.
 2. Güven değişken ver.
 
-MUM SAYISI: 1-10 mum arası.
+MUM SAYISI: M1'de 2 dakika = 2 mum. 1-3 arası ver. 5+ verme.
 
-M1 BÖLGE TESPİTİ (ÇOK ÖNEMLİ):
+M1 BÖLGE TESPİTİ:
 Sana gönderilen grafiklerden M1 olanının görseldeki konumunu YÜZDE olarak bul.
 - x, y, w, h (0-100 arası tam sayı)
 - Hangi fotoğrafın M1 olduğunu sol üstteki "M1" etiketinden bul.
-- Sadece 1 grafik varsa ve o M1 ise: x=0, y=0, w=100, h=100 ver.
-- Sadece 1 grafik varsa ve M1 değilse: yine x=0, y=0, w=100, h=100 ver (görselin tamamı).
+- Tek grafik varsa: x=0, y=0, w=100, h=100 ver.
 
 FORMAT: SADECE geçerli JSON. Sayılarda NOKTA kullan. Türkçe yaz.
 
 JSON ŞEMASI:
 - sembol, yon ("LONG"|"SHORT"|"BEKLE"), guven (0-100)
 - giris, stop_loss, take_profit (array), risk_odul
+- m1_atr (integer, M1 ortalama mum boyutu)
 - trend_m1, vwap_durumu, fvg_tespit, likidite_durumu
 - destekler (array), direncler (array), formasyonlar (array)
 - kullanilan_teknikler (array)
@@ -409,6 +436,52 @@ def check_rate_limit(cid):
     return True
 
 # ==========================================
+# SL/TP MANTIK FİLTRESİ (ATR TABANLI)
+# ==========================================
+def sl_tp_makul_mu(a):
+    """SL ve TP mesafeleri ATR'ye göre mantıklı mı kontrol et."""
+    try:
+        g = float(str(a.get("giris", "0")).replace(",", "."))
+        s = float(str(a.get("stop_loss", "0")).replace(",", "."))
+        atr = float(a.get("m1_atr") or 0)
+
+        # ATR yoksa fiyat seviyesinden tahmin et
+        if atr < 1:
+            if g > 50000:
+                atr = 40
+            elif g > 10000:
+                atr = 15
+            elif g > 1000:
+                atr = 5
+            else:
+                atr = 1
+
+        sl_fark = abs(g - s)
+
+        # SL: ATR x 0.8 ile ATR x 6 arası olmalı
+        if sl_fark > atr * 6:
+            return False, f"SL çok uzak ({sl_fark:.0f} puan, ATR={atr:.0f})"
+        if sl_fark < atr * 0.8:
+            return False, f"SL çok kısa ({sl_fark:.0f} puan, ATR={atr:.0f})"
+
+        # TP'ler SL'nin 1.2x - 4x arası olmalı
+        tps = a.get("take_profit") or []
+        for i, tp in enumerate(tps, 1):
+            try:
+                tpv = float(str(tp).replace(",", "."))
+                tp_fark = abs(tpv - g)
+                if tp_fark > sl_fark * 4:
+                    return False, f"TP{i} çok uzak ({tp_fark:.0f} puan)"
+                if tp_fark < sl_fark * 1.2:
+                    return False, f"TP{i} çok kısa ({tp_fark:.0f} puan)"
+            except:
+                continue
+
+        return True, ""
+    except Exception:
+        return True, ""
+
+# ==========================================
 # GEMINI ANALİZ
 # ==========================================
 def analyze_chart(images_bytes_list, cid, sembol, coklu=False):
@@ -442,6 +515,7 @@ def analyze_chart(images_bytes_list, cid, sembol, coklu=False):
                     "stop_loss": {"type": "string"},
                     "take_profit": {"type": "array", "items": {"type": "string"}},
                     "risk_odul": {"type": "string"},
+                    "m1_atr": {"type": "integer"},
                     "trend_m1": {"type": "string"},
                     "vwap_durumu": {"type": "string"},
                     "fvg_tespit": {"type": "string"},
@@ -469,7 +543,7 @@ def analyze_chart(images_bytes_list, cid, sembol, coklu=False):
                     }
                 },
                 "required": ["sembol", "yon", "guven", "kisa_analiz", "gerekce", "yol_puani",
-                             "kalan_mum", "mum_yonu", "hareket_aciklamasi", "m1_bolge"]
+                             "kalan_mum", "mum_yonu", "hareket_aciklamasi", "m1_bolge", "m1_atr"]
             }
         }
     }
@@ -529,7 +603,14 @@ def analyze_chart(images_bytes_list, cid, sembol, coklu=False):
                 if g < 65:
                     a["yon"] = "BEKLE"
 
-                print(f"🎯 M1 bölge: {a.get('m1_bolge')}", flush=True)
+                # SL/TP mantık kontrolü (ATR tabanlı)
+                ok, sebep = sl_tp_makul_mu(a)
+                if not ok and a.get("yon") in ("LONG", "SHORT"):
+                    print(f"⚠️ {sebep} → BEKLE'ye çevrildi", flush=True)
+                    a["yon"] = "BEKLE"
+                    a["uyari"] = f"{sebep}. Sinyal iptal edildi."
+
+                print(f"🎯 M1 bölge: {a.get('m1_bolge')} | M1 ATR: {a.get('m1_atr')}", flush=True)
                 return a
 
             elif resp.status_code == 503:
@@ -606,13 +687,13 @@ def draw_projection(img_bytes, yon, puanlar, sembol="XAU/USD", m1_bolge=None):
     for i in range(len(noktalar) - 1):
         draw.line([noktalar[i], noktalar[i+1]], fill=renk, width=6)
 
-    (xa, ya), (xb, yb) = noktalar[-2], noktalar[-1]
-    angle = math.atan2(yb - ya, xb - xa)
+    (xa, ya), (xe, ye) = noktalar[-2], noktalar[-1]
+    angle = math.atan2(ye - ya, xe - xa)
     arrow_len = 30
     arrow_angle = math.pi / 6
-    p1 = (xb, yb)
-    p2 = (xb - arrow_len * math.cos(angle - arrow_angle), yb - arrow_len * math.sin(angle - arrow_angle))
-    p3 = (xb - arrow_len * math.cos(angle + arrow_angle), yb - arrow_len * math.sin(angle + arrow_angle))
+    p1 = (xe, ye)
+    p2 = (xe - arrow_len * math.cos(angle - arrow_angle), ye - arrow_len * math.sin(angle - arrow_angle))
+    p3 = (xe - arrow_len * math.cos(angle + arrow_angle), ye - arrow_len * math.sin(angle + arrow_angle))
     draw.polygon([p1, p2, p3], fill=renk)
     draw.ellipse([noktalar[0][0]-6, noktalar[0][1]-6, noktalar[0][0]+6, noktalar[0][1]+6], fill=renk)
 
@@ -846,8 +927,12 @@ def handle_command(cid, text):
     text = (text or "").strip()
     cmd = text.split()[0].lower() if text else ""
 
-    if cmd in ("/menu", "/start", "/yardim"):
+    if cmd in ("/menu", "/start"):
         show_menu(cid)
+        return
+
+    if cmd == "/yardim":
+        show_yardim(cid)
         return
 
     if cmd == "/gecmis":
@@ -877,7 +962,6 @@ def handle_callback(cq):
         requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/answerCallbackQuery",
                       json={"callback_query_id": cb_id}, timeout=10)
 
-        # Menü butonları
         if data == "menu:ana":
             show_menu(cid, message_id)
             return
@@ -894,7 +978,6 @@ def handle_callback(cq):
             show_yardim(cid, message_id)
             return
 
-        # Tuttu/Tutmadı
         if data.startswith("sonuc:"):
             _, sonuc, aid_str = data.split(":")
             aid = int(aid_str)
@@ -979,7 +1062,7 @@ def process_analysis(cid, images_bytes_list, sembol, coklu):
 def main():
     threading.Thread(target=run_health_server, daemon=True).start()
     init_db()
-    print(f"=== SENTETİK ANALİZ BOTU v4 BAŞLADI (GEMINI {GEMINI_MODEL}) ===", flush=True)
+    print(f"=== SENTETİK ANALİZ BOTU v5 BAŞLADI (GEMINI {GEMINI_MODEL}) ===", flush=True)
     offset = get_offset()
 
     while True:
