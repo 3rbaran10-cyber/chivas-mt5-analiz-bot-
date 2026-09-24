@@ -74,6 +74,14 @@ Kullanıcı KISA mesafeli işlem istiyor. SL/TP M1 üzerinde yakın seviyelerde 
 
 ÖNEMLİ: 500+ puan SL VERME. Bu semboller 100.000 civarında olsa bile
 M1 grafiğindeki mum boyutu 20-80 puan arasındadır. SL/TP bu ölçekte kalmalı.
+
+YOL PUANI SIRALAMASI (ÇOK ÖNEMLİ):
+yol_puani dizisini YÖN ile uyumlu sırala.
+- SHORT yönünde: ilk puan EN YÜKSEK (örn: 90), son puan EN DÜŞÜK (örn: 10) olmalı.
+  Yani fiyat düşecek → puanlar azalmalı: [90, 75, 60, 45, 30, 20, 10]
+- LONG yönünde: ilk puan EN DÜŞÜK (örn: 10), son puan EN YÜKSEK (örn: 90) olmalı.
+  Yani fiyat yükselecek → puanlar artmalı: [10, 20, 30, 45, 60, 75, 90]
+- BEKLE yönünde: yol_puani dizisi göndermek zorunlu değil.
 """
 
 # ==========================================
@@ -107,13 +115,18 @@ KARAR KURALLARI:
 
 MUM SAYISI: M1 grafiğinde 2 dakika = 2 mum. 1-3 arası ver. 5+ verme.
 
-M1 BÖLGE TESPİTİ:
-Görselde M1 grafiğinin konumunu YÜZDE olarak bul:
+M1 BÖLGE TESPİTİ (ÇOK ÖNEMLİ):
+Görselde M1 grafiğinin konumunu YÜZDE olarak bul.
+M1 etiketi görselin HERHANGİ bir yerinde olabilir:
+- Sol üst, sağ üst, sol alt, sağ alt, ortada — nerede olursa olsun bul.
+MT5'te tipik düzen: sol büyük grafik M30, sağ üst M15, sağ alt M1 olabilir.
+Ama sen etikete bakarak M1'in yerini doğru tespit et.
+Bölge değerleri:
 - x: sol kenardan uzaklık (0-100)
 - y: üst kenardan uzaklık (0-100)
 - w: genişlik (0-100)
 - h: yükseklik (0-100)
-Sol üstteki "M1" etiketini bul. Sadece M1 varsa: x=0, y=0, w=100, h=100 ver.
+Sadece M1 varsa: x=0, y=0, w=100, h=100 ver.
 
 FORMAT: SADECE geçerli JSON. Sayılarda NOKTA kullan. Türkçe yaz.
 
@@ -125,7 +138,7 @@ JSON ŞEMASI:
 - destekler (array), direncler (array), formasyonlar (array)
 - kullanilan_teknikler (array)
 - kisa_analiz, gerekce (\\n ile maddeler)
-- yol_puani (array, 7 sayı 0-100)
+- yol_puani (array, 7 sayı 0-100, YÖN İLE UYUMLU SIRALI)
 - kalan_mum (1-3), mum_yonu, hareket_aciklamasi, sonraki_hamle, uyari
 - m1_bolge (object: x, y, w, h)"""
 
@@ -163,8 +176,8 @@ MUM SAYISI: M1'de 2 dakika = 2 mum. 1-3 arası ver.
 
 M1 BÖLGE TESPİTİ:
 M1 grafiğinin konumunu YÜZDE olarak bul.
+M1 etiketi görselin HERHANGİ bir yerinde olabilir (sol üst, sağ alt, ortada vb.).
 - x, y, w, h (0-100 arası tam sayı)
-- Sol üstteki "M1" etiketinden bul.
 - Tek grafik varsa: x=0, y=0, w=100, h=100 ver.
 
 FORMAT: SADECE geçerli JSON. Sayılarda NOKTA kullan. Türkçe yaz.
@@ -177,7 +190,7 @@ JSON ŞEMASI:
 - destekler (array), direncler (array), formasyonlar (array)
 - kullanilan_teknikler (array)
 - kisa_analiz, gerekce (\\n ile maddeler)
-- yol_puani (array, 7 sayı 0-100)
+- yol_puani (array, 7 sayı 0-100, YÖN İLE UYUMLU SIRALI)
 - kalan_mum (1-3), mum_yonu, hareket_aciklamasi, sonraki_hamle, uyari
 - m1_bolge (object: x, y, w, h)"""
 
@@ -429,7 +442,7 @@ def analyze_chart(images_bytes_list, cid, sembol, coklu=False):
         "contents": [{"parts": parts}],
         "generationConfig": {
             "temperature": 0.3,
-            "maxOutputTokens": 16000,
+            "maxOutputTokens": 32768,   # ⬅️ 16000'den 32768'e çıkarıldı (JSON kesilmesini önler)
             "thinkingConfig": {"thinkingBudget": 1024},
             "responseMimeType": "application/json",
             "responseSchema": {
@@ -583,6 +596,18 @@ def draw_projection(img_bytes, yon, puanlar, sembol="XAU/USD", m1_bolge=None):
     temiz = validate_yol_puani(puanlar)
     if not temiz:
         return None
+
+    # ✅ YÖN GARANTİSİ: Model yanlış sıralarsa düzelt
+    # SHORT ise puanlar yukarıdan aşağıya doğru azalmalı (ilk yüksek, son düşük)
+    # LONG ise puanlar aşağıdan yukarıya doğru artmalı (ilk düşük, son yüksek)
+    if yon == "SHORT":
+        if temiz[0] < temiz[-1]:
+            temiz = temiz[::-1]
+            print("🔧 SHORT için yol_puani ters çevrildi", flush=True)
+    elif yon == "LONG":
+        if temiz[0] > temiz[-1]:
+            temiz = temiz[::-1]
+            print("🔧 LONG için yol_puani ters çevrildi", flush=True)
 
     if m1_bolge and all(k in m1_bolge for k in ["x", "y", "w", "h"]):
         try:
@@ -983,7 +1008,7 @@ def process_analysis(cid, images_bytes_list, sembol, coklu):
 def main():
     threading.Thread(target=run_health_server, daemon=True).start()
     init_db()
-    print(f"=== SENTETİK ANALİZ BOTU v7 BAŞLADI (GEMINI {GEMINI_MODEL}) ===", flush=True)
+    print(f"=== SENTETİK ANALİZ BOTU v8 BAŞLADI (GEMINI {GEMINI_MODEL}) ===", flush=True)
     offset = get_offset()
 
     while True:
