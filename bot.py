@@ -77,20 +77,14 @@ M1 grafiğindeki mum boyutu 20-80 puan arasındadır. SL/TP bu ölçekte kalmal�
 """
 
 # ==========================================
-# PROMPT (TEKLİ FOTO - ALT ALTA 3 GRAFİK)
+# PROMPT (TEKLİ FOTO)
 # ==========================================
 PROMPT_TEMPLATE = """Sen dünyanın en iyi {sembol} analiz uzmanısın. 15+ yıllık deneyimli profesyonelsin. Smart Money konseptlerini (ICT) derinlemesine bilirsin.
 
-Sana {sembol} için BİR MT5 ekran görüntüsü gönderiliyor.
-Bu TEK bir fotoğraftır ve içinde ALT ALTA (dikey) dizilmiş 3 grafik vardır:
-- EN ÜSTTE: M30 grafiği
-- ORTADA:  M15 grafiği
-- EN ALTTA: M1 grafiği
-
-Sıralama her zaman budur. Sol üstteki "M30", "M15", "M1" etiketlerini kontrol ederek doğrula.
+Sana {sembol} için BİR MT5 ekran görüntüsü gönderiliyor. Bu TEK bir fotoğraftır ama içinde YAN YANA bölünmüş 3 grafik olabilir: M30, M15, M1.
 
 GÖREV:
-1. Görseldeki 3 TF'yi de oku (M30 üstte, M15 ortada, M1 altta).
+1. Görselde kaç zaman dilimi olduğunu tespit et (sol üstteki M30, M15, M1 etiketlerini oku).
 2. Tüm TF'leri birlikte değerlendir:
    - M30 → ana trend yönü
    - M15 → orta vade yapı ve onay
@@ -113,21 +107,13 @@ KARAR KURALLARI:
 
 MUM SAYISI: M1 grafiğinde 2 dakika = 2 mum. 1-3 arası ver. 5+ verme.
 
-M1 BÖLGE TESPİTİ (ÇOK ÖNEMLİ — OK ÇİZİMİ İÇİN):
-M1 grafiği görselin EN ALTINDA yer alır (alt alta dizili 3 grafikten en alttaki).
-Görseldeki M1 grafiğinin konumunu YÜZDE olarak bul:
+M1 BÖLGE TESPİTİ:
+Görselde M1 grafiğinin konumunu YÜZDE olarak bul:
 - x: sol kenardan uzaklık (0-100)
 - y: üst kenardan uzaklık (0-100)
 - w: genişlik (0-100)
 - h: yükseklik (0-100)
-
-ALT ALTA 3 GRAFİK İÇİN TAHMİNİ DEĞERLER:
-- M30: y≈0,  h≈33
-- M15: y≈33, h≈33
-- M1:  y≈66, h≈34
-
-Sol üstteki "M1" etiketini görerek bölgeyi KESİNLEŞTİR.
-Sadece M1 tek başına varsa: x=0, y=0, w=100, h=100 ver.
+Sol üstteki "M1" etiketini bul. Sadece M1 varsa: x=0, y=0, w=100, h=100 ver.
 
 FORMAT: SADECE geçerli JSON. Sayılarda NOKTA kullan. Türkçe yaz.
 
@@ -772,8 +758,8 @@ def _menu_text():
     return (
         "🤖 *CHIVAS MT5 ANALİZ BOTU*\n\n"
         "📸 *Nasıl analiz yaparım?*\n"
-        "• Tek fotoğraf (M30+M15+M1 alt alta) → caption: `PainX 999`\n"
-        "• Albüm (M30+M15+M1 ayrı ayrı) → 3 foto tek seferde, caption: `PainX 999`\n\n"
+        "• Tek fotoğraf (M1) → caption: `PainX 999`\n"
+        "• Albüm (M30+M15+M1) → 3 foto tek seferde, caption: `PainX 999`\n\n"
         "⬇️ Aşağıdaki butonlardan seç:"
     )
 
@@ -845,11 +831,11 @@ def show_yardim(cid, message_id=None):
     text = (
         "❓ *YARDIM*\n\n"
         "📸 *Analiz nasıl yapılır?*\n"
-        "1. MT5'te grafiği aç (alt alta M30+M15+M1 veya tek M1)\n"
+        "1. MT5'te grafiği aç (tek M1 veya M30+M15+M1 bölünmüş)\n"
         "2. Screenshot al\n"
         "3. Bota gönder\n"
         "4. Caption'a sembolü yaz (örn: `PainX 999`)\n\n"
-        "📸 *Albüm (Ayrı Ayrı 3 Foto):*\n"
+        "📸 *Albüm (Çoklu TF):*\n"
         "• 3 fotoğrafı tek seferde seç\n"
         "• Sıra: M30 → M15 → M1\n"
         "• Caption birine ekle\n\n"
@@ -997,7 +983,7 @@ def process_analysis(cid, images_bytes_list, sembol, coklu):
 def main():
     threading.Thread(target=run_health_server, daemon=True).start()
     init_db()
-    print(f"=== SENTETİK ANALİZ BOTU v8 BAŞLADI (GEMINI {GEMINI_MODEL}) ===", flush=True)
+    print(f"=== SENTETİK ANALİZ BOTU v7 BAŞLADI (GEMINI {GEMINI_MODEL}) ===", flush=True)
     offset = get_offset()
 
     while True:
