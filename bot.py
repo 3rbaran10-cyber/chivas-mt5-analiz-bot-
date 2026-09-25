@@ -13,14 +13,17 @@ GEMINI_MODEL = "gemini-3.1-pro-preview"
 GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
 
 # ==========================================
-# DESTEKLENEN SEMBOLLER
+# DESTEKLENEN SEMBOLLER (sadece sol paneldekiler)
 # ==========================================
 ALLOWED_SYMBOLS = [
-    "MAX PainX 1000", "MAX GainX 2000", "MAX PainX 2000", "PainX 1200",
-    "MAX GainX 1000", "PainX 999", "GainX 999", "PainX 600", "PainX 400",
-    "PainX 800", "GainX 800", "GainX 600", "TrendX 1800", "BreakX 1800",
-    "SwitchX 1800", "GainX 1200", "BreakX 1200", "TrendX 1200", "SwitchX 1200",
-    "BreakX 600",
+    "GainX 1200",
+    "GainX 999",
+    "MAX GainX 1000",
+    "MAX PainX 1000",
+    "PainX 1200",
+    "PainX 999",
+    "PlusX 1",
+    "QuadX",
 ]
 ALLOWED_SYMBOLS_NORM = {
     s.lower().replace("-", " ").replace("/", " ").strip(): s for s in ALLOWED_SYMBOLS
@@ -442,7 +445,7 @@ def analyze_chart(images_bytes_list, cid, sembol, coklu=False):
         "contents": [{"parts": parts}],
         "generationConfig": {
             "temperature": 0.3,
-            "maxOutputTokens": 32768,   # ⬅️ 16000'den 32768'e çıkarıldı (JSON kesilmesini önler)
+            "maxOutputTokens": 32768,
             "thinkingConfig": {"thinkingBudget": 1024},
             "responseMimeType": "application/json",
             "responseSchema": {
@@ -597,9 +600,6 @@ def draw_projection(img_bytes, yon, puanlar, sembol="XAU/USD", m1_bolge=None):
     if not temiz:
         return None
 
-    # ✅ YÖN GARANTİSİ: Model yanlış sıralarsa düzelt
-    # SHORT ise puanlar yukarıdan aşağıya doğru azalmalı (ilk yüksek, son düşük)
-    # LONG ise puanlar aşağıdan yukarıya doğru artmalı (ilk düşük, son yüksek)
     if yon == "SHORT":
         if temiz[0] < temiz[-1]:
             temiz = temiz[::-1]
@@ -1072,7 +1072,7 @@ def main():
                             break
 
                     if not sembol:
-                        send_msg(cid, "⚠️ Albümdeki bir fotoğrafın altına sembolü yazın.\nÖrnek: `GainX 800`", parse_mode="Markdown")
+                        send_msg(cid, "⚠️ Albümdeki bir fotoğrafın altına sembolü yazın.\nÖrnek: `GainX 1200`", parse_mode="Markdown")
                         continue
 
                     images = []
