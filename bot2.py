@@ -45,117 +45,118 @@ def run_health_server():
     HTTPServer(("0.0.0.0", port), Health).serve_forever()
 
 # ==========================================
-# SEVİYE KURALLARI - KISA MESAFELİ SL/TP
+# SEVİYE KURALLARI - SADECE M1
 # ==========================================
 SEVIYE_KURALLARI = """
-M1 ODAKLI İŞLEM:
-Bu görsel SADECE M1 grafiğidir. Giriş/SL/TP hesapları SADECE M1 yapısına göre verilir.
+SADECE M1 GRAFIGI:
+Bu görsel TEK bir M1 grafiğidir. Baska zaman dilimi (M30, M15) YOKTUR.
+Tum analiz sadece M1 uzerinden yapilir.
 
-VOLATİLİTE ÖLÇÜMÜ (İLK İŞ):
+VOLATILITE OLCUMU (ILK IS):
 M1 grafiğinde son 20 mumu incele.
 Ortalama mum boyutunu (high - low) puan cinsinden tahmin et.
 Bunu JSON'a "m1_atr" olarak yaz.
 
-SL/TP MESAFESİ (ÇOK ÖNEMLİ - KISA MESAFE):
-Kullanıcı KISA mesafeli işlem istiyor. SL/TP M1 üzerinde yakın seviyelerde olmalı.
-UZUN MESAFELİ SL/TP YASAK. Paranın erimesini istemiyor.
+SL/TP MESAFESI (COK ONEMLI - KISA MESAFE):
+Kullanıcı KISA mesafeli islem istiyor. SL/TP M1 uzerinde yakin seviyelerde olmali.
+UZUN MESAFELI SL/TP YASAK. Paranin erimesini istemiyor.
 
-1. SL mesafesi = m1_atr x 1 (sabit çarpan, KISA).
-   Örnek: m1_atr = 30 ise → SL ≈ 30 puan. m1_atr = 50 ise → SL ≈ 50 puan.
-2. Minimum SL = 10 puan. Maksimum SL = m1_atr x 2. Bu aralığın dışına çıkma.
-3. SL = M1'deki en yakın yapısal seviyenin (swing low/high) hemen ötesi.
+1. SL mesafesi = m1_atr x 1 (sabit carpan, KISA).
+   Ornek: m1_atr = 30 ise -> SL ~ 30 puan. m1_atr = 50 ise -> SL ~ 50 puan.
+2. Minimum SL = 10 puan. Maksimum SL = m1_atr x 2. Bu araligin disina cikma.
+3. SL = M1'deki en yakin yapisal seviyenin (swing low/high) hemen otesi.
 4. TP1 = SL x 1.5
 5. TP2 = SL x 2.0
-6. R/R 1:1.5 altındaysa → 'BEKLE'.
-7. M1'de net yapı yoksa → 'BEKLE'.
+6. R/R 1:1.5 altindaysa -> 'BEKLE'.
+7. M1'de net yapi yoksa -> 'BEKLE'.
 
-ÖRNEK (m1_atr = 40):
-- Giriş: 83360
+ORNEK (m1_atr = 40):
+- Giris: 83360
 - SL: 83320 (40 puan = ATR x 1)
 - TP1: 83420 (60 puan = SL x 1.5)
 - TP2: 83440 (80 puan = SL x 2.0)
 
-ÖNEMLİ: 100+ puan SL VERME. Bu sembollerde M1 mum boyutu 10-50 puan arasındadır.
-SL/TP bu ölçekte kalmalı. 200+ puan SL kesinlikle YASAK.
+ONEMLI: 100+ puan SL VERME. Bu sembollerde M1 mum boyutu 10-50 puan arasindadir.
+SL/TP bu olcekte kalmali. 200+ puan SL kesinlikle YASAK.
 
 YOL PUANI SIRALAMASI:
-yol_puani dizisini YÖN ile uyumlu sırala.
-- SHORT yönünde: ilk puan EN YÜKSEK (örn: 90), son puan EN DÜŞÜK (örn: 10).
-- LONG yönünde: ilk puan EN DÜŞÜK (örn: 10), son puan EN YÜKSEK (örn: 90).
-- BEKLE yönünde: yol_puani dizisi göndermek zorunlu değil.
+yol_puani dizisini YON ile uyumlu sirala.
+- SHORT yonunde: ilk puan EN YUKSEK (orn: 90), son puan EN DUSUK (orn: 10).
+- LONG yonunde: ilk puan EN DUSUK (orn: 10), son puan EN YUKSEK (orn: 90).
+- BEKLE yonunde: yol_puani dizisi gondermek zorunlu degil.
 """
 
 # ==========================================
 # İLERİ SEVİYE TEKNİKLER
 # ==========================================
 ILERI_TEKNIKLER = """
-İLERİ SEVİYE TUZAK ANALİZİ (ÇOK ÖNEMLİ):
+ILERI SEVIYE TUZAK ANALIZI (COK ONEMLI):
 
 1. JUDAS SWING (Sahte Hareket):
-   Fiyat ani bir kırılma yapar (yukarı veya aşağı), millet o yöne girer,
-   sonra fiyat SERT TERS YÖNE döner.
-   - Yukarı sahte kırılma → millet LONG açar → fiyat aşağı döner = SHORT fırsatı
-   - Aşağı sahte kırılma → millet SHORT açar → fiyat yukarı döner = LONG fırsatı
-   JSON'a "judas_swing" alanı ekle: "var" | "yok" + kısa açıklama.
+   Fiyat ani bir kirilma yapar (yukari veya asagi), millet o yone girer,
+   sonra fiyat SERT TERS YONE doner.
+   - Yukari sahte kirilma -> millet LONG acar -> fiyat asagi doner = SHORT firsati
+   - Asagi sahte kirilma -> millet SHORT acar -> fiyat yukari doner = LONG firsati
+   JSON'a "judas_swing" alani ekle: "var" | "yok" + kisa aciklama.
 
 2. SPRING / UPTHRUST (Son Tuzak):
-   - SPRING: Fiyat desteğin ALTINA iner, hemen geri çıkar → LONG sinyali
-   - UPTHRUST: Fiyat direncin ÜSTÜNE çıkar, hemen geri iner → SHORT sinyali
-   JSON'a "spring_upthrust" alanı ekle: "spring" | "upthrust" | "yok" + açıklama.
+   - SPRING: Fiyat destegin ALTINA iner, hemen geri cikar -> LONG sinyali
+   - UPTHRUST: Fiyat direncin USTUNE cikar, hemen geri iner -> SHORT sinyali
+   JSON'a "spring_upthrust" alani ekle: "spring" | "upthrust" | "yok" + aciklama.
 
 3. POWER OF 3 - MANIPULATION (Sahte Faz):
    Fiyat 3 fazda hareket eder:
    - A (Accumulation): Yatay birikim
-   - M (Manipulation): Sahte kırılma / tuzak
-   - D (Distribution): Gerçek hareket
-   Şu an hangi fazdayız?
-   JSON'a "power_of_3" alanı ekle: "accumulation" | "manipulation" | "distribution" + açıklama.
+   - M (Manipulation): Sahte kirilma / tuzak
+   - D (Distribution): Gercek hareket
+   Su an hangi fazdayiz?
+   JSON'a "power_of_3" alani ekle: "accumulation" | "manipulation" | "distribution" + aciklama.
 
-MANİPULASYON TESPİT KURALLARI:
-- Fiyat son 10 mumda bir seviyeyi kırıp geri döndüyse → JUDAS SWING var
-- Fiyat son 5 mumda destek/direnci ihlal edip geri döndüyse → SPRING/UPTHRUST var
-- Eğer manipülasyon tespit edildiyse → gerçek hareket yönünde işlem öner
-- Manipülasyon yoksa normal analiz yap
+MANIPULASYON TESPIT KURALLARI:
+- Fiyat son 10 mumda bir seviyeyi kirip geri donduyse -> JUDAS SWING var
+- Fiyat son 5 mumda destek/direnci ihlal edip geri donduyse -> SPRING/UPTHRUST var
+- Eger manipulasyon tespit edildiyse -> gercek hareket yonunde islem oner
+- Manipulasyon yoksa normal analiz yap
 
-GÜVEN ETKİSİ:
-- Judas Swing + Power of 3 Manipulation aynı anda varsa → güven %85-95
-- Spring/Upthrust netse → güven %75-85
-- Sadece teknik analiz varsa → güven %65-75
+GUVEN ETKISI:
+- Judas Swing + Power of 3 Manipulation ayni anda varsa -> guven %85-95
+- Spring/Upthrust netse -> guven %75-85
+- Sadece teknik analiz varsa -> guven %65-75
 """
 
 # ==========================================
 # PROMPT (SADECE M1 - TEK FOTO)
 # ==========================================
-PROMPT_TEMPLATE = """Sen dünyanın en iyi {sembol} analiz uzmanısın. 15+ yıllık deneyimli profesyonelsin. Smart Money konseptlerini (ICT) derinlemesine bilirsin.
+PROMPT_TEMPLATE = """Sen dunyanin en iyi {sembol} analiz uzmanisin. 15+ yillik deneyimli profesyonelsin. Smart Money konseptlerini (ICT) derinlemesine bilirsin.
 
-Sana {sembol} için TEK bir M1 grafiği gönderiliyor.
+Sana {sembol} icin TEK bir M1 grafigi gonderiliyor.
 
-GÖREV:
-1. M1 grafiğini incele.
-2. İleri seviye tuzak analizi yap (Judas Swing, Spring/Upthrust, Power of 3).
-3. Sonraki 2 dakikalık fiyat projeksiyonunu tahmin et (2 dakika = 2 M1 mumu).
+GOREV:
+1. M1 grafigini incele.
+2. Ileri seviye tuzak analizi yap (Judas Swing, Spring/Upthrust, Power of 3).
+3. Sonraki 2 dakikalik fiyat projeksiyonunu tahmin et (2 dakika = 2 M1 mumu).
 
 """ + SEVIYE_KURALLARI + ILERI_TEKNIKLER + """
-KULLANILACAK TEKNİKLER:
-- Market yapısı: HH/LL, BOS, CHoCH
-- Destek/direnç, Order Block, Supply/Demand
+KULLANILACAK TEKNIKLER:
+- Market yapisi: HH/LL, BOS, CHoCH
+- Destek/direnc, Order Block, Supply/Demand
 - VWAP, FVG, Liquidity Sweep
 - EMA 20/50/200, RSI, MACD, Hacim
-- Mum formasyonları (engulfing, pin bar, doji, hammer)
+- Mum formasyonlari (engulfing, pin bar, doji, hammer)
 - Fibonacci retracement
 - ICT: Judas Swing, Spring/Upthrust, Power of 3
 
 KARAR KURALLARI:
-1. Güven %65 altındaysa 'yon' = 'BEKLE'.
-2. Güven oranını değişken ver (%50, %65, %75, %85, %95).
-3. Manipülasyon tespit edildiyse güveni artır.
-4. Fiyat sahte kırılma sonrası ters yöne dönüyorsa → o yönde işlem öner.
+1. Guven %65 altindaysa 'yon' = 'BEKLE'.
+2. Guven oranini degisken ver (%50, %65, %75, %85, %95).
+3. Manipulasyon tespit edildiyse guveni artir.
+4. Fiyat sahte kirilma sonrasi ters yone donuyorsa -> o yonde islem oner.
 
-MUM SAYISI: M1 grafiğinde 2 dakika = 2 mum. 1-3 arası ver. 5+ verme.
+MUM SAYISI: M1 grafiginde 2 dakika = 2 mum. 1-3 arasi ver. 5+ verme.
 
-FORMAT: SADECE geçerli JSON. Sayılarda NOKTA kullan. Türkçe yaz.
+FORMAT: SADECE gecerli JSON. Sayilarda NOKTA kullan. Turkce yaz.
 
-JSON ŞEMASI:
+JSON SEMASI:
 - sembol, yon ("LONG"|"SHORT"|"BEKLE"), guven (0-100)
 - giris, stop_loss, take_profit (array), risk_odul
 - m1_atr (integer, M1 ortalama mum boyutu)
@@ -163,11 +164,11 @@ JSON ŞEMASI:
 - destekler (array), direncler (array), formasyonlar (array)
 - kullanilan_teknikler (array)
 - kisa_analiz, gerekce (\\n ile maddeler)
-- yol_puani (array, 7 sayı 0-100, YÖN İLE UYUMLU SIRALI)
+- yol_puani (array, 7 sayi 0-100, YON ILE UYUMLU SIRALI)
 - kalan_mum (1-3), mum_yonu, hareket_aciklamasi, sonraki_hamle, uyari
-- judas_swing (string: "var" | "yok" + kısa açıklama)
-- spring_upthrust (string: "spring" | "upthrust" | "yok" + kısa açıklama)
-- power_of_3 (string: "accumulation" | "manipulation" | "distribution" + kısa açıklama)"""
+- judas_swing (string: "var" | "yok" + kisa aciklama)
+- spring_upthrust (string: "spring" | "upthrust" | "yok" + kisa aciklama)
+- power_of_3 (string: "accumulation" | "manipulation" | "distribution" + kisa aciklama)"""
 
 # ==========================================
 # SQLITE
@@ -189,9 +190,9 @@ def init_db():
         """)
         conn.commit()
         conn.close()
-        print("✅ DB hazır", flush=True)
+        print("DB hazir", flush=True)
     except Exception as e:
-        print(f"DB init hatası: {e}", flush=True)
+        print(f"DB init hatasi: {e}", flush=True)
 
 def get_offset():
     try:
@@ -210,7 +211,7 @@ def save_offset(offset):
         conn.commit()
         conn.close()
     except Exception as e:
-        print(f"Offset hatası: {e}", flush=True)
+        print(f"Offset hatasi: {e}", flush=True)
 
 def save_analysis(cid, sembol, a):
     try:
@@ -233,7 +234,7 @@ def save_analysis(cid, sembol, a):
         conn.close()
         return rid
     except Exception as e:
-        print(f"save_analysis hatası: {e}", flush=True)
+        print(f"save_analysis hatasi: {e}", flush=True)
         return None
 
 def update_sonuc(analiz_id, sonuc):
@@ -244,7 +245,7 @@ def update_sonuc(analiz_id, sonuc):
         conn.close()
         return True
     except Exception as e:
-        print(f"update_sonuc hatası: {e}", flush=True)
+        print(f"update_sonuc hatasi: {e}", flush=True)
         return False
 
 def get_gecmis(cid, limit=10):
@@ -287,7 +288,7 @@ def get_istatistik(cid):
         conn.close()
         return {"total": total, "tuttu": tuttu, "tutmadi": tutmadi, "semboller": semboller}
     except Exception as e:
-        print(f"istatistik hatası: {e}", flush=True)
+        print(f"istatistik hatasi: {e}", flush=True)
         return {"total": 0, "tuttu": 0, "tutmadi": 0, "semboller": []}
 
 # ==========================================
@@ -304,7 +305,7 @@ def send_msg(cid, text, parse_mode=None, reply_markup=None):
                           json=payload, timeout=10)
         return r.json().get("result", {}).get("message_id")
     except Exception as e:
-        print(f"send_msg hatası: {e}", flush=True)
+        print(f"send_msg hatasi: {e}", flush=True)
         return None
 
 def send_photo(cid, photo_bytes, caption="", reply_markup=None):
@@ -316,7 +317,7 @@ def send_photo(cid, photo_bytes, caption="", reply_markup=None):
                           data=data, files={"photo": ("chart.png", photo_bytes)}, timeout=30)
         return r.json().get("result", {}).get("message_id")
     except Exception as e:
-        print(f"send_photo hatası: {e}", flush=True)
+        print(f"send_photo hatasi: {e}", flush=True)
         return None
 
 def edit_reply_markup(cid, message_id, reply_markup=None):
@@ -325,7 +326,7 @@ def edit_reply_markup(cid, message_id, reply_markup=None):
                       json={"chat_id": cid, "message_id": message_id, "reply_markup": reply_markup or {"inline_keyboard": []}},
                       timeout=10)
     except Exception as e:
-        print(f"edit_markup hatası: {e}", flush=True)
+        print(f"edit_markup hatasi: {e}", flush=True)
 
 def edit_message_text(cid, message_id, text, parse_mode=None, reply_markup=None):
     try:
@@ -337,7 +338,7 @@ def edit_message_text(cid, message_id, text, parse_mode=None, reply_markup=None)
         requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/editMessageText",
                       json=payload, timeout=10)
     except Exception as e:
-        print(f"edit_text hatası: {e}", flush=True)
+        print(f"edit_text hatasi: {e}", flush=True)
 
 def get_file_bytes(file_id):
     r = requests.get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getFile",
@@ -390,16 +391,16 @@ def check_rate_limit(cid):
     last = USER_COOLDOWN.get(cid, 0)
     if now - last < RATE_LIMIT_SECONDS:
         kalan = int(RATE_LIMIT_SECONDS - (now - last))
-        send_msg(cid, f"⏳ Çok hızlı gönderiyorsunuz. {kalan} saniye bekleyin.")
+        send_msg(cid, f"Cok hizli gonderiyorsunuz. {kalan} saniye bekleyin.")
         return False
     USER_COOLDOWN[cid] = now
     return True
 
 # ==========================================
-# GEMINI ANALİZ
+# GEMINI ANALIZ
 # ==========================================
 def analyze_chart(image_bytes, cid, sembol):
-    print(f"🔍 Analiz başladı (Sembol: {sembol}, Tek M1 görsel)", flush=True)
+    print(f"Analiz basladi (Sembol: {sembol}, Tek M1 gorsel)", flush=True)
 
     parts = [{"text": PROMPT_TEMPLATE.format(sembol=sembol)}]
 
@@ -463,7 +464,7 @@ def analyze_chart(image_bytes, cid, sembol):
     for deneme in range(max_deneme):
         try:
             resp = requests.post(GEMINI_URL, headers=headers, json=payload, timeout=180)
-            print(f"🔍 Gemini HTTP = {resp.status_code}", flush=True)
+            print(f"Gemini HTTP = {resp.status_code}", flush=True)
 
             if resp.status_code == 200:
                 r = resp.json()
@@ -474,8 +475,8 @@ def analyze_chart(image_bytes, cid, sembol):
                         fr = r["candidates"][0].get("finishReason", "?")
                     except:
                         fr = "?"
-                    print(f"❌ Boş cevap. finishReason={fr}", flush=True)
-                    send_msg(cid, f"❌ Gemini boş cevap döndü. (Sebep: {fr})")
+                    print(f"Bos cevap. finishReason={fr}", flush=True)
+                    send_msg(cid, f"Gemini bos cevap dondu. (Sebep: {fr})")
                     return None
 
                 if "```json" in text:
@@ -497,18 +498,18 @@ def analyze_chart(image_bytes, cid, sembol):
                         try:
                             a = json.loads(text[bas:son+1])
                         except Exception as e2:
-                            print(f"Kurtarma başarısız: {e2}", flush=True)
-                            print(f"❌ Ham cevap: {text[:600]}", flush=True)
-                            send_msg(cid, "❌ Gemini cevabı bozuk JSON.")
+                            print(f"Kurtarma basarisiz: {e2}", flush=True)
+                            print(f"Ham cevap: {text[:600]}", flush=True)
+                            send_msg(cid, "Gemini cevabi bozuk JSON.")
                             return None
                     else:
                         try:
                             fr = r["candidates"][0].get("finishReason", "?")
                         except:
                             fr = "?"
-                        print(f"❌ JSON YOK. finishReason={fr}", flush=True)
-                        print(f"❌ Ham cevap: {text[:600]}", flush=True)
-                        send_msg(cid, f"❌ Gemini JSON vermedi. (Sebep: {fr})")
+                        print(f"JSON YOK. finishReason={fr}", flush=True)
+                        print(f"Ham cevap: {text[:600]}", flush=True)
+                        send_msg(cid, f"Gemini JSON vermedi. (Sebep: {fr})")
                         return None
 
                 for k in ["giris", "stop_loss"]:
@@ -524,31 +525,31 @@ def analyze_chart(image_bytes, cid, sembol):
                 if g < 65:
                     a["yon"] = "BEKLE"
 
-                print(f"🎯 M1 ATR: {a.get('m1_atr')} | Yön: {a.get('yon')} | Judas: {str(a.get('judas_swing',''))[:30]} | Po3: {str(a.get('power_of_3',''))[:30]}", flush=True)
+                print(f"M1 ATR: {a.get('m1_atr')} | Yon: {a.get('yon')}", flush=True)
                 return a
 
             elif resp.status_code == 503:
                 if deneme < max_deneme - 1:
                     bekleme = (deneme + 1) * 10
-                    send_msg(cid, f"⏳ Gemini yoğun. {bekleme} sn sonra tekrar... ({deneme+1}/{max_deneme})")
+                    send_msg(cid, f"Gemini yogun. {bekleme} sn sonra tekrar... ({deneme+1}/{max_deneme})")
                     time.sleep(bekleme)
                     continue
                 else:
-                    send_msg(cid, "❌ Gemini şu an aşırı yoğun.")
+                    send_msg(cid, "Gemini su an asiri yogun.")
                     return None
             elif resp.status_code == 429:
-                send_msg(cid, "⚠️ Çok fazla istek. 30 sn bekleyin.")
+                send_msg(cid, "Cok fazla istek. 30 sn bekleyin.")
                 time.sleep(30)
                 continue
             else:
-                send_msg(cid, f"❌ Gemini Hatası ({resp.status_code}): {resp.text[:400]}")
+                send_msg(cid, f"Gemini Hatasi ({resp.status_code}): {resp.text[:400]}")
                 return None
         except Exception as e:
-            send_msg(cid, f"❌ Analiz Hatası: {str(e)[:200]}")
+            send_msg(cid, f"Analiz Hatasi: {str(e)[:200]}")
             return None
 
 # ==========================================
-# PROJEKSİYON ÇİZİMİ
+# PROJEKSIYON CIZIMI
 # ==========================================
 def draw_projection(img_bytes, yon, puanlar, sembol="XAU/USD"):
     img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
@@ -569,11 +570,11 @@ def draw_projection(img_bytes, yon, puanlar, sembol="XAU/USD"):
     if yon == "SHORT":
         if temiz[0] < temiz[-1]:
             temiz = temiz[::-1]
-            print("🔧 SHORT için yol_puani ters çevrildi", flush=True)
+            print("SHORT icin yol_puani ters cevrildi", flush=True)
     elif yon == "LONG":
         if temiz[0] > temiz[-1]:
             temiz = temiz[::-1]
-            print("🔧 LONG için yol_puani ters çevrildi", flush=True)
+            print("LONG icin yol_puani ters cevrildi", flush=True)
 
     x1 = int(W * 0.80)
     x2 = int(W * 0.98)
@@ -726,7 +727,7 @@ def build_card(a, sembol="XAU/USD"):
     return "\n".join(t)
 
 # ==========================================
-# MENÜ FONKSİYONLARI
+# MENU FONKSIYONLARI
 # ==========================================
 def _ana_menu_buton():
     return {"inline_keyboard": [[{"text": "🔙 Ana Menü", "callback_data": "menu:ana"}]]}
@@ -865,7 +866,7 @@ def handle_command(cid, text):
     if cmd == "/semboller":
         show_semboller(cid); return
 
-    send_msg(cid, "ℹ️ Fotoğraf at ve altına sembol yaz. Menü için /menu")
+    send_msg(cid, "Fotograf at ve altina sembol yaz. Menu icin /menu")
 
 # ==========================================
 # CALLBACK
@@ -901,10 +902,10 @@ def handle_callback(cq):
             else:
                 send_msg(cid, "⚠️ Bu analiz zaten işaretlenmiş.")
     except Exception as e:
-        print(f"callback hatası: {e}", flush=True)
+        print(f"callback hatasi: {e}", flush=True)
 
 # ==========================================
-# ANALİZ AKIŞI
+# ANALIZ AKISI
 # ==========================================
 def process_analysis(cid, image_bytes, sembol):
     send_msg(cid, f"⏳ {sembol} analiz ediliyor... (M1 + İleri Teknikler)")
@@ -938,12 +939,12 @@ def process_analysis(cid, image_bytes, sembol):
         send_msg(cid, kart, reply_markup=reply_markup)
 
 # ==========================================
-# ANA DÖNGÜ
+# ANA DONGU
 # ==========================================
 def main():
     threading.Thread(target=run_health_server, daemon=True).start()
     init_db()
-    print(f"=== SENTETİK ANALİZ BOTU v10 (M1 + İLERİ TEKNİKLER) BAŞLADI (GEMINI {GEMINI_MODEL}) ===", flush=True)
+    print(f"=== SENTETIK ANALIZ BOTU v10 (SADECE M1) BASLADI (GEMINI {GEMINI_MODEL}) ===", flush=True)
     offset = get_offset()
 
     while True:
@@ -966,7 +967,7 @@ def main():
 
                 if "photo" in msg:
                     if msg.get("media_group_id"):
-                        send_msg(cid, "⚠️ Lütfen TEK fotoğraf gönderin.\nM1 grafiğinin screenshot'ını at, altına sembolü yaz.")
+                        send_msg(cid, "Lutfen TEK fotograf gonderin.\nM1 grafiginin screenshot'ini at, altina sembolu yaz.")
                         continue
 
                     if not check_rate_limit(cid):
@@ -975,14 +976,14 @@ def main():
                     caption = (msg.get("caption") or "").strip()
                     sembol = caption_to_symbol(caption)
                     if not sembol:
-                        send_msg(cid, f"⚠️ Lütfen fotoğrafın altına sembolü tam yazın.\nÖrnek: `{ALLOWED_SYMBOLS[0]}`", parse_mode="Markdown")
+                        send_msg(cid, f"Lutfen fotografin altina sembolu tam yazin.\nOrnek: `{ALLOWED_SYMBOLS[0]}`", parse_mode="Markdown")
                         continue
 
                     try:
                         img_bytes = get_file_bytes(msg["photo"][-1]["file_id"])
                         process_analysis(cid, img_bytes, sembol)
                     except Exception as e:
-                        send_msg(cid, f"❌ Hata: {str(e)[:200]}")
+                        send_msg(cid, f"Hata: {str(e)[:200]}")
                     continue
 
                 text = msg.get("text", "")
@@ -991,7 +992,7 @@ def main():
                     continue
 
                 if not text and "photo" not in msg:
-                    send_msg(cid, "ℹ️ Fotoğraf at ve altına sembol yaz. Menü için /menu")
+                    send_msg(cid, "Fotograf at ve altina sembol yaz. Menu icin /menu")
 
         except Exception as e:
             print(f"=== LOOP HATASI: {e} ===", flush=True)
