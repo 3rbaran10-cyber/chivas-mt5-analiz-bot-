@@ -524,7 +524,7 @@ def analyze_chart(image_bytes, cid, sembol):
                 if g < 65:
                     a["yon"] = "BEKLE"
 
-                print(f"🎯 M1 ATR: {a.get('m1_atr')} | Yön: {a.get('yon')} | Judas: {a.get('judas_swing','')[:30]} | Po3: {a.get('power_of_3','')[:30]}", flush=True)
+                print(f"🎯 M1 ATR: {a.get('m1_atr')} | Yön: {a.get('yon')} | Judas: {str(a.get('judas_swing',''))[:30]} | Po3: {str(a.get('power_of_3',''))[:30]}", flush=True)
                 return a
 
             elif resp.status_code == 503:
@@ -654,7 +654,6 @@ def build_card(a, sembol="XAU/USD"):
     if vwap and vwap.lower() not in ["belirsiz", ""]:
         t.append(f"• VWAP: {vwap}")
 
-    # İLERİ SEVİYE TUZAK ANALİZİ
     judas = a.get("judas_swing", "")
     spring = a.get("spring_upthrust", "")
     po3 = a.get("power_of_3", "")
