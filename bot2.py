@@ -13,17 +13,13 @@ GEMINI_MODEL = "gemini-3.5-flash-lite"
 GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
 
 # ==========================================
-# DESTEKLENEN SEMBOLLER
+# DESTEKLENEN SEMBOLLER (SADECE 4)
 # ==========================================
 ALLOWED_SYMBOLS = [
-    "GainX 1200",
-    "GainX 999",
-    "MAX GainX 1000",
-    "MAX PainX 1000",
     "PainX 1200",
     "PainX 999",
-    "PlusX 1",
-    "QuadX",
+    "GainX 999",
+    "GainX 1200",
 ]
 ALLOWED_SYMBOLS_NORM = {
     s.lower().replace("-", " ").replace("/", " ").strip(): s for s in ALLOWED_SYMBOLS
@@ -87,41 +83,43 @@ yol_puani dizisini YON ile uyumlu sirala.
 """
 
 # ==========================================
-# İLERİ SEVİYE TEKNİKLER
+# SPRING / UPTHRUST (TEK TUZAK TEKNIGI)
 # ==========================================
-ILERI_TEKNIKLER = """
-ILERI SEVIYE TUZAK ANALIZI (COK ONEMLI):
+SPRING_UPTHRUST = """
+SPRING / UPTHRUST ANALIZI (EN ONEMLI TUZAK TEKNIGI):
 
-1. JUDAS SWING (Sahte Hareket):
-   Fiyat ani bir kirilma yapar (yukari veya asagi), millet o yone girer,
-   sonra fiyat SERT TERS YONE doner.
-   - Yukari sahte kirilma -> millet LONG acar -> fiyat asagi doner = SHORT firsati
-   - Asagi sahte kirilma -> millet SHORT acar -> fiyat yukari doner = LONG firsati
-   JSON'a "judas_swing" alani ekle: "var" | "yok" + kisa aciklama.
+1. SPRING (Yay - LONG sinyali):
+   Fiyat bir DESTEK seviyesinin ALTINA iner (sahte kirilma),
+   ama HEMEN geri yukari cikar. Uzun alt fitil olusturur.
+   Yani: Destek kirildi sanilir, millet SHORT acar, sonra fiyat sert yukari doner.
+   -> LONG firsati.
 
-2. SPRING / UPTHRUST (Son Tuzak):
-   - SPRING: Fiyat destegin ALTINA iner, hemen geri cikar -> LONG sinyali
-   - UPTHRUST: Fiyat direncin USTUNE cikar, hemen geri iner -> SHORT sinyali
-   JSON'a "spring_upthrust" alani ekle: "spring" | "upthrust" | "yok" + aciklama.
+2. UPTHRUST (Yukari itme - SHORT sinyali):
+   Fiyat bir DIRENC seviyesinin USTUNE cikar (sahte kirilma),
+   ama HEMEN geri asagi iner. Uzun ust fitil olusturur.
+   Yani: Direnc kirildi sanilir, millet LONG acar, sonra fiyat sert asagi doner.
+   -> SHORT firsati.
 
-3. POWER OF 3 - MANIPULATION (Sahte Faz):
-   Fiyat 3 fazda hareket eder:
-   - A (Accumulation): Yatay birikim
-   - M (Manipulation): Sahte kirilma / tuzak
-   - D (Distribution): Gercek hareket
-   Su an hangi fazdayiz?
-   JSON'a "power_of_3" alani ekle: "accumulation" | "manipulation" | "distribution" + aciklama.
+TESPIT KURALLARI (COK DIKKATLI OL):
+- Sadece SON 5 MUM icinde olusan Spring/Upthrust gecerli.
+- Fitil uzunlugu govdenin EN AZ 2 KATI olmali.
+- Sahte kirilma seviyesi net gorunmeli (destek/direnc cizgisi).
+- Donus mumu HACIMLI olmali (buyuk govde).
 
-MANIPULASYON TESPIT KURALLARI:
-- Fiyat son 10 mumda bir seviyeyi kirip geri donduyse -> JUDAS SWING var
-- Fiyat son 5 mumda destek/direnci ihlal edip geri donduyse -> SPRING/UPTHRUST var
-- Eger manipulasyon tespit edildiyse -> gercek hareket yonunde islem oner
-- Manipulasyon yoksa normal analiz yap
+ONEMLI - YANLIS POZITIF ONLEME:
+- Eger net bir Spring/Upthrust YOKSA "yok" yaz. UYDURMA.
+- Sadece supheli durumda "yok" yaz.
+- Yukaridaki 4 kuralin hepsi saglanmiyorsa -> "yok".
+
+JSON'a "spring_upthrust" alani ekle:
+- Format: "spring" | "upthrust" | "yok" + kisa aciklama
+- Ornek: "spring - 106640 destek seviyesi sahte kirildi, uzun alt fitil, LONG sinyali"
+- Ornek: "yok - net spring/upthrust tespit edilmedi"
 
 GUVEN ETKISI:
-- Judas Swing + Power of 3 Manipulation ayni anda varsa -> guven %85-95
-- Spring/Upthrust netse -> guven %75-85
-- Sadece teknik analiz varsa -> guven %65-75
+- Net Spring/Upthrust varsa -> guven %80-90
+- Supheli ise -> "yok" yaz, guveni normal tut
+- Yoksa -> normal teknik analiz guveni %65-75
 """
 
 # ==========================================
@@ -133,10 +131,10 @@ Sana {sembol} icin TEK bir M1 grafigi gonderiliyor.
 
 GOREV:
 1. M1 grafigini incele.
-2. Ileri seviye tuzak analizi yap (Judas Swing, Spring/Upthrust, Power of 3).
+2. Spring/Upthrust tuzak analizi yap (SADECE bu teknik).
 3. Sonraki 2 dakikalik fiyat projeksiyonunu tahmin et (2 dakika = 2 M1 mumu).
 
-""" + SEVIYE_KURALLARI + ILERI_TEKNIKLER + """
+""" + SEVIYE_KURALLARI + SPRING_UPTHRUST + """
 KULLANILACAK TEKNIKLER:
 - Market yapisi: HH/LL, BOS, CHoCH
 - Destek/direnc, Order Block, Supply/Demand
@@ -144,13 +142,13 @@ KULLANILACAK TEKNIKLER:
 - EMA 20/50/200, RSI, MACD, Hacim
 - Mum formasyonlari (engulfing, pin bar, doji, hammer)
 - Fibonacci retracement
-- ICT: Judas Swing, Spring/Upthrust, Power of 3
+- ICT: Spring/Upthrust (ana teknik)
 
 KARAR KURALLARI:
 1. Guven %65 altindaysa 'yon' = 'BEKLE'.
 2. Guven oranini degisken ver (%50, %65, %75, %85, %95).
-3. Manipulasyon tespit edildiyse guveni artir.
-4. Fiyat sahte kirilma sonrasi ters yone donuyorsa -> o yonde islem oner.
+3. Spring/Upthrust net tespit edildiyse guveni %80-90 yap.
+4. Net tuzak yoksa normal teknik analiz guveni %65-75.
 
 MUM SAYISI: M1 grafiginde 2 dakika = 2 mum. 1-3 arasi ver. 5+ verme.
 
@@ -166,9 +164,7 @@ JSON SEMASI:
 - kisa_analiz, gerekce (\\n ile maddeler)
 - yol_puani (array, 7 sayi 0-100, YON ILE UYUMLU SIRALI)
 - kalan_mum (1-3), mum_yonu, hareket_aciklamasi, sonraki_hamle, uyari
-- judas_swing (string: "var" | "yok" + kisa aciklama)
-- spring_upthrust (string: "spring" | "upthrust" | "yok" + kisa aciklama)
-- power_of_3 (string: "accumulation" | "manipulation" | "distribution" + kisa aciklama)"""
+- spring_upthrust (string: "spring" | "upthrust" | "yok" + kisa aciklama)"""
 
 # ==========================================
 # SQLITE
@@ -447,13 +443,11 @@ def analyze_chart(image_bytes, cid, sembol):
                     "hareket_aciklamasi": {"type": "string"},
                     "sonraki_hamle": {"type": "string"},
                     "uyari": {"type": "string"},
-                    "judas_swing": {"type": "string"},
-                    "spring_upthrust": {"type": "string"},
-                    "power_of_3": {"type": "string"}
+                    "spring_upthrust": {"type": "string"}
                 },
                 "required": ["sembol", "yon", "guven", "kisa_analiz", "gerekce", "yol_puani",
                              "kalan_mum", "mum_yonu", "hareket_aciklamasi", "m1_atr",
-                             "judas_swing", "spring_upthrust", "power_of_3"]
+                             "spring_upthrust"]
             }
         }
     }
@@ -525,7 +519,7 @@ def analyze_chart(image_bytes, cid, sembol):
                 if g < 65:
                     a["yon"] = "BEKLE"
 
-                print(f"M1 ATR: {a.get('m1_atr')} | Yon: {a.get('yon')}", flush=True)
+                print(f"M1 ATR: {a.get('m1_atr')} | Yon: {a.get('yon')} | Spring/Upthrust: {str(a.get('spring_upthrust',''))[:40]}", flush=True)
                 return a
 
             elif resp.status_code == 503:
@@ -655,23 +649,12 @@ def build_card(a, sembol="XAU/USD"):
     if vwap and vwap.lower() not in ["belirsiz", ""]:
         t.append(f"• VWAP: {vwap}")
 
-    judas = a.get("judas_swing", "")
     spring = a.get("spring_upthrust", "")
-    po3 = a.get("power_of_3", "")
 
-    tuzak_lines = []
-    if judas and judas.lower() not in ["yok", "belirsiz", ""]:
-        tuzak_lines.append(f"🎭 Judas Swing: {judas[:80]}")
     if spring and spring.lower() not in ["yok", "belirsiz", ""]:
-        tuzak_lines.append(f"🌀 Spring/Upthrust: {spring[:80]}")
-    if po3 and po3.lower() not in ["belirsiz", ""]:
-        tuzak_lines.append(f"⚡ Power of 3: {po3[:80]}")
-
-    if tuzak_lines:
         t.append("")
-        t.append("🎯 TUZAK ANALİZİ")
-        for tl in tuzak_lines:
-            t.append(tl)
+        t.append("🎯 SPRING / UPTHRUST")
+        t.append(f"🌀 {spring[:120]}")
 
     t.append("")
     t.append("🎯 SEVİYELER")
@@ -748,14 +731,17 @@ def _menu_keyboard():
 
 def _menu_text():
     return (
-        "🤖 *CHIVAS MT5 ANALİZ BOTU v10*\n\n"
+        "🤖 *CHIVAS MT5 ANALİZ BOTU v11*\n\n"
         "📸 *Nasıl analiz yaparım?*\n"
         "• M1 grafiği fotoğrafı at\n"
-        "• Caption'a sembolü yaz (örn: `GainX 999`)\n\n"
-        "🎯 *İleri Seviye Analiz:*\n"
-        "• Judas Swing (sahte hareket)\n"
-        "• Spring/Upthrust (son tuzak)\n"
-        "• Power of 3 (manipülasyon fazı)\n\n"
+        "• Caption'a sembolü yaz (örn: `PainX 999`)\n\n"
+        "🎯 *Ana Teknik:*\n"
+        "• Spring/Upthrust (son tuzak)\n\n"
+        "📋 *Desteklenen Semboller:*\n"
+        "• PainX 1200\n"
+        "• PainX 999\n"
+        "• GainX 999\n"
+        "• GainX 1200\n\n"
         "⬇️ Aşağıdaki butonlardan seç:"
     )
 
@@ -830,12 +816,11 @@ def show_yardim(cid, message_id=None):
         "1. MT5'te M1 grafiğini aç\n"
         "2. Screenshot al\n"
         "3. Bota gönder\n"
-        "4. Caption'a sembolü yaz (örn: `GainX 999`)\n\n"
-        "🎯 *İleri Seviye Tespit:*\n"
-        "Bot şunları otomatik arar:\n"
-        "• Judas Swing (sahte kırılma)\n"
-        "• Spring/Upthrust (son tuzak)\n"
-        "• Power of 3 (manipülasyon fazı)\n\n"
+        "4. Caption'a sembolü yaz (örn: `PainX 999`)\n\n"
+        "🎯 *Ana Teknik:*\n"
+        "Spring/Upthrust (son tuzak)\n"
+        "• Spring → LONG sinyali\n"
+        "• Upthrust → SHORT sinyali\n\n"
         "📊 *Komutlar:*\n"
         "/menu — Menü\n"
         "/gecmis — Geçmiş\n"
@@ -908,7 +893,7 @@ def handle_callback(cq):
 # ANALIZ AKISI
 # ==========================================
 def process_analysis(cid, image_bytes, sembol):
-    send_msg(cid, f"⏳ {sembol} analiz ediliyor... (M1 + İleri Teknikler)")
+    send_msg(cid, f"⏳ {sembol} analiz ediliyor... (M1 + Spring/Upthrust)")
 
     a = analyze_chart(image_bytes, cid, sembol)
     if not a:
@@ -944,7 +929,7 @@ def process_analysis(cid, image_bytes, sembol):
 def main():
     threading.Thread(target=run_health_server, daemon=True).start()
     init_db()
-    print(f"=== SENTETIK ANALIZ BOTU v10 (SADECE M1) BASLADI (GEMINI {GEMINI_MODEL}) ===", flush=True)
+    print(f"=== SENTETIK ANALIZ BOTU v11 (M1 + SPRING/UPTHRUST) BASLADI (GEMINI {GEMINI_MODEL}) ===", flush=True)
     offset = get_offset()
 
     while True:
@@ -976,7 +961,7 @@ def main():
                     caption = (msg.get("caption") or "").strip()
                     sembol = caption_to_symbol(caption)
                     if not sembol:
-                        send_msg(cid, f"Lutfen fotografin altina sembolu tam yazin.\nOrnek: `{ALLOWED_SYMBOLS[0]}`", parse_mode="Markdown")
+                        send_msg(cid, f"Lutfen fotografin altina sembolu tam yazin.\nOrnek: `PainX 999`", parse_mode="Markdown")
                         continue
 
                     try:
