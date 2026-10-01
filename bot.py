@@ -9,21 +9,25 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
-GEMINI_MODEL = "gemini-3.1-flash-lite"
+GEMINI_MODEL = "gemini-3.1-pro"
 GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
 
 # ==========================================
-# DESTEKLENEN SEMBOLLER (sadece sol paneldekiler)
+# DESTEKLENEN SEMBOLLER (Görseldeki güncel liste)
 # ==========================================
 ALLOWED_SYMBOLS = [
+    "BreakX 1800",
     "GainX 1200",
+    "GainX 800",
     "GainX 999",
     "MAX GainX 1000",
+    "MAX GainX 2000",
     "MAX PainX 1000",
+    "MAX PainX 2000",
     "PainX 1200",
     "PainX 999",
-    "PlusX 1",
-    "QuadX",
+    "SwitchX 1800",
+    "TrendX 1800",
 ]
 ALLOWED_SYMBOLS_NORM = {
     s.lower().replace("-", " ").replace("/", " ").strip(): s for s in ALLOWED_SYMBOLS
