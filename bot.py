@@ -13,7 +13,7 @@ GEMINI_MODEL = "gemini-3.5-flash-lite"
 GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
 
 # ==========================================
-# DESTEKLENEN SEMBOLLER (GÜNCEL)
+# DESTEKLENEN SEMBOLLER
 # ==========================================
 ALLOWED_SYMBOLS = [
     "BreakX 1800",
@@ -39,9 +39,7 @@ ALLOWED_SYMBOLS_NORM = {
 }
 
 # ==========================================
-# SEMBOL BAZLI M1 ATR ÖLÇEĞİ (YENİ)
-# Her sembolün tipik M1 ATR aralığı (puan)
-# Bu sayede "çok yakın/çok uzak SL" sorunu çözülür
+# SEMBOL BAZLI M1 ATR ÖLÇEĞİ
 # ==========================================
 SYMBOL_ATR_SCALE = {
     "GainX 400": (8, 25),
@@ -79,15 +77,40 @@ def run_health_server():
     HTTPServer(("0.0.0.0", port), Health).serve_forever()
 
 # ==========================================
-# ORTAK SEVİYE KURALLARI (GÜNCELLENDİ)
+# YARDIMCI: GÜVENLİ FLOAT PARSE
+# ==========================================
+def parse_float_guvenli(deger):
+    if deger is None:
+        return None
+    s = str(deger).strip()
+    s = s.replace(' ', '').replace('\u00a0', '').replace('$', '').replace('₺', '')
+    if not s:
+        return None
+
+    if '.' in s and ',' in s:
+        if s.rfind(',') > s.rfind('.'):
+            s = s.replace('.', '').replace(',', '.')
+        else:
+            s = s.replace(',', '')
+    elif ',' in s:
+        parts = s.split(',')
+        if len(parts) == 2 and len(parts[1]) == 3 and len(parts[0]) <= 3:
+            s = s.replace(',', '')
+        else:
+            s = s.replace(',', '.')
+
+    try:
+        return float(s)
+    except (ValueError, TypeError):
+        return None
+
+# ==========================================
+# ORTAK SEVİYE KURALLARI
 # ==========================================
 SEVIYE_KURALLARI = """
 ZAMAN DİLİMİ YAPISI:
-Görselde ÜSTTE M1, ALTTA M5 olabilir. Ya da tek M1 olabilir.
-Sen etiketlerden (M1, M5) hangisinin nerede olduğunu oku.
-
-M5 = ANA TREND ve YÖN (EMA 20/50, yapı kırılımı BOS/CHoCH)
-M1 = GİRİŞ TETİKLEYİCİSİ (kısa vadeli yapı, likidite süpürme, FVG)
+- M5 = ANA TREND ve YÖN (EMA 20/50, yapı kırılımı BOS/CHoCH)
+- M1 = GİRİŞ TETİKLEYİCİSİ (kısa vadeli yapı, likidite süpürme, FVG)
 
 MTF UYUM KURALLARI:
 - M5 ve M1 aynı yönde ise → güven yüksek (%75-90)
@@ -96,7 +119,7 @@ MTF UYUM KURALLARI:
 - M5 ve M1 çelişiyor → 'BEKLE' ver
 - M5 yatay, M1 yönlü → sadece M1 scalp yapılabilir, güven %60
 
-SPIKE / TICK RADARI (ÇOK ÖNEMLİ):
+SPIKE / TICK RADARI:
 Görselin sol üstünde "one price drop per X ticks on average" gibi bir yazı olabilir.
 Bunu OKU ve şu şekilde yorumla:
 - Eğer fiyat son X tick'te çok yükseldiyse ve X tick kuralı yaklaşıyorsa → ani düşüş riski VAR
@@ -119,28 +142,27 @@ SL/TP HESABI (PYTHON TARAFINDA YAPILIR):
 Sen sadece GİRİŞ fiyatını (mevcut piyasa fiyatı) ve m1_atr'yi ver.
 SL/TP mesafesini Python hesaplayacak. Sen SL/TP fiyatı VERME.
 
-YOL PUANI SIRALAMASI (ÇOK ÖNEMLİ):
+YOL PUANI SIRALAMASI:
 yol_puani dizisini YÖN ile uyumlu sırala.
 - SHORT yönünde: ilk puan EN YÜKSEK (örn: 90), son puan EN DÜŞÜK (örn: 10) olmalı.
-  Yani fiyat düşecek → puanlar azalmalı: [90, 75, 60, 45, 30, 20, 10]
 - LONG yönünde: ilk puan EN DÜŞÜK (örn: 10), son puan EN YÜKSEK (örn: 90) olmalı.
-  Yani fiyat yükselecek → puanlar artmalı: [10, 20, 30, 45, 60, 75, 90]
 - BEKLE yönünde: yol_puani dizisi göndermek zorunlu değil.
 """
 
 # ==========================================
-# PROMPT (TEKLİ FOTO - M1 ÜST / M5 ALT OLABİLİR)
+# PROMPT (TEKLİ FOTO - ÜST M1 / ALT M5)
 # ==========================================
 PROMPT_TEMPLATE = """Sen dünyanın en iyi {sembol} analiz uzmanısın. 15+ yıllık deneyimli profesyonelsin. Smart Money konseptlerini (ICT) derinlemesine bilirsin.
 
-Sana {sembol} için BİR MT5 ekran görüntüsü gönderiliyor. Bu TEK bir fotoğraftır ama içinde YAN YANA veya ÜST ALTA bölünmüş 2 grafik olabilir: ÜSTTE M1, ALTTA M5.
+Sana {sembol} için BİR MT5 ekran görüntüsü gönderiliyor. Bu TEK fotoğraf dikey olarak İKİYE BÖLÜNMÜŞTÜR:
+- ÜST YARI = M1 (1 dakikalık grafik)
+- ALT YARI = M5 (5 dakikalık grafik)
 
 GÖREV:
-1. Görselde kaç zaman dilimi olduğunu tespit et (sol üstteki M1, M5 etiketlerini oku).
-2. Tüm TF'leri birlikte değerlendir:
-   - M5 → ana trend yönü (EMA 20/50, BOS/CHoCH)
-   - M1 → GİRİŞ/SL/TP için TEK referans
-3. Sonraki 2 dakikalık fiyat projeksiyonunu tahmin et (2 dakika = 2 M1 mumu).
+1. Görselin ÜST YARISINDAKİ M1 grafiğini ve ALT YARISINDAKİ M5 grafiğini incele.
+2. M5 → ana trend yönü (EMA 20/50, BOS/CHoCH)
+3. M1 → GİRİŞ/SL/TP için TEK referans
+4. İkisini birleştirerek sonraki 2 dakikalık fiyat projeksiyonunu ver.
 
 """ + SEVIYE_KURALLARI + """
 KULLANILACAK TEKNİKLER:
@@ -159,16 +181,13 @@ KARAR KURALLARI:
 MUM SAYISI: M1 grafiğinde 2 dakika = 2 mum. 1-3 arası ver. 5+ verme.
 
 M1 BÖLGE TESPİTİ (ÇOK ÖNEMLİ):
-Görselde M1 grafiğinin konumunu YÜZDE olarak bul.
-M1 etiketi görselin HERHANGİ bir yerinde olabilir.
-MT5'te tipik düzen: ÜSTTE M1, ALTTA M5 olabilir. Ya da yan yana olabilir.
-Ama sen etikete bakarak M1'in yerini doğru tespit et.
-Bölge değerleri:
-- x: sol kenardan uzaklık (0-100)
-- y: üst kenardan uzaklık (0-100)
-- w: genişlik (0-100)
-- h: yükseklik (0-100)
-Sadece M1 varsa: x=0, y=0, w=100, h=100 ver.
+M1 grafiği görselin ÜST YARISINDADIR.
+m1_bolge değerleri:
+- x: 0-10
+- y: 0-5
+- w: 80-100
+- h: 40-50
+Eğer görselde sadece M1 varsa: x=0, y=0, w=100, h=100 ver.
 
 FORMAT: SADECE geçerli JSON. Sayılarda NOKTA kullan. Türkçe yaz.
 
@@ -193,16 +212,19 @@ JSON ŞEMASI:
 - m1_bolge (object: x, y, w, h)"""
 
 # ==========================================
-# PROMPT (ÇOKLU FOTO - ALBÜM)
+# PROMPT (ALBÜM - 2 AYRI FOTO: 1.M1, 2.M5)
 # ==========================================
 PROMPT_TEMPLATE_MULTI = """Sen dünyanın en iyi {sembol} analiz uzmanısın. 15+ yıllık deneyimli profesyonelsin. Smart Money konseptlerini (ICT) derinlemesine bilirsin.
 
-Sana {sembol} için birden fazla zaman diliminde grafik gönderiliyor.
+Sana {sembol} için İKİ AYRI grafik fotoğrafı gönderiliyor.
+- 1. FOTOĞRAF = M1 (1 dakikalık grafik)
+- 2. FOTOĞRAF = M5 (5 dakikalık grafik)
 
 GÖREV:
-1. Hangi grafiğin hangi TF olduğunu sol üst köşedeki etiketlerden (M5, M1) OKU.
-2. En büyük TF'den en küçüğe sırala (M5 → M1).
-3. İkisini birleştirerek sonraki 2 dakikalık fiyat projeksiyonunu ver.
+1. Her iki grafiği de incele.
+2. M5 → ana trend yönü (EMA 20/50, BOS/CHoCH)
+3. M1 → GİRİŞ/SL/TP için TEK referans
+4. İkisini birleştirerek sonraki 2 dakikalık fiyat projeksiyonunu ver.
 
 ÇOKLU TF KURALLARI:
 - M5 ve M1 aynı yön → güven yüksek (%75-90)
@@ -225,10 +247,8 @@ KARAR KURALLARI:
 MUM SAYISI: M1'de 2 dakika = 2 mum. 1-3 arası ver.
 
 M1 BÖLGE TESPİTİ:
-M1 grafiğinin konumunu YÜZDE olarak bul.
-M1 etiketi görselin HERHANGİ bir yerinde olabilir.
-- x, y, w, h (0-100 arası tam sayı)
-- Tek grafik varsa: x=0, y=0, w=100, h=100 ver.
+1. FOTOĞRAF M1'dir. Bu fotoğrafta M1 grafiği tüm fotoğrafı kaplar.
+- x=0, y=0, w=100, h=100
 
 FORMAT: SADECE geçerli JSON. Sayılarda NOKTA kullan. Türkçe yaz.
 
@@ -253,43 +273,29 @@ JSON ŞEMASI:
 - m1_bolge (object: x, y, w, h)"""
 
 # ==========================================
-# PYTHON TARAFINDA SL/TP HESAPLAMA (YENİ)
+# PYTHON TARAFINDA SL/TP HESAPLAMA
 # ==========================================
 def hesapla_sl_tp(giris_str, m1_atr, yon, sembol):
-    """
-    Gemini'nin verdiği giriş fiyatı ve m1_atr'den yola çıkarak
-    SL/TP'yi Python tarafında tutarlı bir şekilde hesaplar.
-    """
-    try:
-        giris = float(str(giris_str).replace(',', '.').strip())
-    except (ValueError, TypeError, AttributeError):
+    giris = parse_float_guvenli(giris_str)
+    if giris is None or giris <= 0:
+        print(f"⚠️ Giriş parse edilemedi: {giris_str}", flush=True)
         return None
 
-    if giris <= 0:
-        return None
-
-    # m1_atr'yi sembol ölçeğine göre sınırla
     scale = SYMBOL_ATR_SCALE.get(sembol, (10, 50))
-    try:
-        m1_atr = int(float(str(m1_atr).replace(',', '.')))
-    except (ValueError, TypeError):
-        m1_atr = scale[0]
+    m1_atr_val = parse_float_guvenli(m1_atr)
+    if m1_atr_val is None:
+        m1_atr_val = scale[0]
+    m1_atr_val = int(m1_atr_val)
+    m1_atr_val = max(scale[0], min(scale[1], m1_atr_val))
 
-    m1_atr = max(scale[0], min(scale[1], m1_atr))
+    sl_mesafe = m1_atr_val * 2
 
-    # SL mesafesi = m1_atr x 2
-    sl_mesafe = m1_atr * 2
-
-    # Güvenlik duvarı: fiyatın %0.01 - %0.5 arası
-    sl_min = max(20, int(giris * 0.0001))  # en az %0.01
-    sl_max = min(m1_atr * 4, int(giris * 0.005))  # en fazla %0.5
-
+    sl_min = max(20, int(giris * 0.0001))
+    sl_max = min(m1_atr_val * 4, int(giris * 0.005))
     if sl_max < sl_min:
         sl_max = sl_min
-
     sl_mesafe = max(sl_min, min(sl_max, sl_mesafe))
 
-    # TP mesafeleri
     tp1_mesafe = sl_mesafe * 1.5
     tp2_mesafe = sl_mesafe * 2.5
 
@@ -310,7 +316,7 @@ def hesapla_sl_tp(giris_str, m1_atr, yon, sembol):
         "take_profit": [f"{tp1:.2f}", f"{tp2:.2f}"],
         "risk_odul": "1:1.5 / 1:2.5",
         "sl_mesafe": sl_mesafe,
-        "m1_atr_kullanilan": m1_atr,
+        "m1_atr_kullanilan": m1_atr_val,
     }
 
 # ==========================================
@@ -489,14 +495,6 @@ def get_file_bytes(file_id):
     url = f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/{r['result']['file_path']}"
     return requests.get(url, timeout=30).content
 
-def temizle_sayi(deger):
-    if deger is None:
-        return deger
-    s = str(deger).strip()
-    if ',' in s and '.' not in s:
-        s = s.replace(',', '.')
-    return s
-
 def validate_yol_puani(puanlar):
     if not isinstance(puanlar, list):
         return None
@@ -666,7 +664,6 @@ def analyze_chart(images_bytes_list, cid, sembol, coklu=False):
                         send_msg(cid, f"❌ Gemini JSON vermedi. (Sebep: {fr})")
                         return None
 
-                # --- PYTHON TARAFINDA SL/TP HESABI ---
                 if a.get("yon") in ("LONG", "SHORT"):
                     sl_tp = hesapla_sl_tp(a.get("giris"), a.get("m1_atr"), a.get("yon"), sembol)
                     if sl_tp:
@@ -675,14 +672,15 @@ def analyze_chart(images_bytes_list, cid, sembol, coklu=False):
                         a["take_profit"] = sl_tp["take_profit"]
                         a["risk_odul"] = sl_tp["risk_odul"]
                         a["sl_mesafe_hesaplanan"] = sl_tp["sl_mesafe"]
-                        print(f"✅ SL/TP Python tarafında hesaplandı: SL={sl_tp['stop_loss']}, TP={sl_tp['take_profit']}", flush=True)
+                        print(f"✅ SL/TP Python: SL={sl_tp['stop_loss']}, TP={sl_tp['take_profit']}", flush=True)
                     else:
-                        print("⚠️ SL/TP hesaplanamadı, Gemini değerleri kullanılacak", flush=True)
-                        a["stop_loss"] = temizle_sayi(a.get("stop_loss"))
-                        a["take_profit"] = [temizle_sayi(x) for x in (a.get("take_profit") or [])]
+                        print("⚠️ SL/TP hesaplanamadı (parse hatası)", flush=True)
+                        a["stop_loss"] = None
+                        a["take_profit"] = []
+                        a["sl_tp_hatasi"] = "Giriş fiyatı okunamadı"
                 else:
-                    a["stop_loss"] = temizle_sayi(a.get("stop_loss"))
-                    a["take_profit"] = [temizle_sayi(x) for x in (a.get("take_profit") or [])]
+                    a["stop_loss"] = None
+                    a["take_profit"] = []
 
                 try:
                     g = int(a.get("guven", 0))
@@ -715,13 +713,9 @@ def analyze_chart(images_bytes_list, cid, sembol, coklu=False):
             return None
 
 # ==========================================
-# MUM FORMATINDA PROJEKSİYON ÇİZİMİ (YENİ)
+# MUM FORMATINDA PROJEKSİYON ÇİZİMİ
 # ==========================================
-def draw_projection(img_bytes, yon, puanlar, sembol="XAU/USD", m1_bolge=None, m1_atr=30):
-    """
-    Yol puanlarını kullanarak M1 grafiğinin sağ tarafına
-    küçük mumlar çizer. LONG = yeşil, SHORT = kırmızı.
-    """
+def draw_projection(img_bytes, yon, puanlar, sembol="XAU/USD", m1_bolge=None, m1_atr=30, tek_foto=False):
     img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
     W, H = img.size
     draw = ImageDraw.Draw(img)
@@ -737,7 +731,6 @@ def draw_projection(img_bytes, yon, puanlar, sembol="XAU/USD", m1_bolge=None, m1
     if not temiz:
         return None
 
-    # Yön uyumlu sıralama
     if yon == "SHORT":
         if temiz[0] < temiz[-1]:
             temiz = temiz[::-1]
@@ -745,7 +738,6 @@ def draw_projection(img_bytes, yon, puanlar, sembol="XAU/USD", m1_bolge=None, m1
         if temiz[0] > temiz[-1]:
             temiz = temiz[::-1]
 
-    # M1 bölgesini belirle
     if m1_bolge and all(k in m1_bolge for k in ["x", "y", "w", "h"]):
         try:
             bx = int(W * float(m1_bolge["x"]) / 100)
@@ -763,7 +755,13 @@ def draw_projection(img_bytes, yon, puanlar, sembol="XAU/USD", m1_bolge=None, m1
     else:
         bx, by, bw, bh = 0, 0, W, H
 
-    # Mumların çizileceği alan (grafiğin sağ tarafı)
+    # Tek fotoğrafta (üst M1, alt M5) M1 bölgesi tüm görseli kaplıyorsa
+    # üst yarıya sabitle. Albümde 1. foto tamamen M1 olduğu için bu blok atlanır.
+    if bh > H * 0.6 and tek_foto:
+        by = int(H * 0.05)
+        bh = int(H * 0.45)
+        print(f"🔧 Tek foto: M1 üst yarıya sabitlendi: y={by} h={bh}", flush=True)
+
     x_start = bx + int(bw * 0.75)
     x_end = bx + int(bw * 0.97)
     y_top = by + int(bh * 0.10)
@@ -774,58 +772,35 @@ def draw_projection(img_bytes, yon, puanlar, sembol="XAU/USD", m1_bolge=None, m1
         return None
 
     step_x = (x_end - x_start) / max(n - 1, 1)
+    alan_h = y_bot - y_top
 
-    # Mum gövde yüksekliği için temel değer (m1_atr'ye göre ölçeklenir)
-    try:
-        atr_val = int(float(str(m1_atr).replace(',', '.')))
-    except:
-        atr_val = 30
-    atr_val = max(5, min(200, atr_val))
+    max_body_h = max(4, min(int(bh * 0.04), int(alan_h / (n * 1.8))))
+    max_wick_h = max(3, int(max_body_h * 0.4))
 
-    # Gövde yüksekliği maksimumu (piksel)
-    max_body_h = max(8, int(bh * 0.04))
-    max_wick_h = max(4, int(bh * 0.015))
-
-    # Her mumu çiz
     for i, p in enumerate(temiz):
         x_center = x_start + step_x * i
-        y_center = y_bot - (p / 100.0) * (y_bot - y_top)
+        y_center = y_bot - (p / 100.0) * alan_h
 
-        # Gövde boyutu puan değerine göre
         body_h = max(4, int((p / 100.0) * max_body_h))
-        body_h = max(4, min(body_h, int(max_body_h * 1.5)))
-
-        candle_w = max(4, int(step_x * 0.5))
+        body_h = max(4, min(body_h, int(max_body_h * 1.2)))
+        candle_w = max(3, int(step_x * 0.5))
 
         if yon == "SHORT":
-            # Kırmızı mum: open üstte, close altta
-            open_y = y_center + body_h / 2
-            close_y = y_center - body_h / 2
-            # Üst fitil (open'dan yukarı)
-            draw.line([(x_center, open_y), (x_center, open_y - max_wick_h)], fill=renk, width=2)
-            # Alt fitil (close'dan aşağı)
-            draw.line([(x_center, close_y), (x_center, close_y + max_wick_h)], fill=renk, width=2)
-            # Gövde
-            draw.rectangle(
-                [x_center - candle_w/2, close_y, x_center + candle_w/2, open_y],
-                fill=renk, outline=renk
-            )
-        else:
-            # Yeşil mum: open altta, close üstte
             open_y = y_center - body_h / 2
             close_y = y_center + body_h / 2
-            # Alt fitil (open'dan aşağı)
+            draw.line([(x_center, open_y), (x_center, open_y - max_wick_h)], fill=renk, width=2)
+            draw.line([(x_center, close_y), (x_center, close_y + max_wick_h)], fill=renk, width=2)
+            draw.rectangle([x_center - candle_w/2, open_y, x_center + candle_w/2, close_y],
+                           fill=renk, outline=renk)
+        else:
+            open_y = y_center + body_h / 2
+            close_y = y_center - body_h / 2
             draw.line([(x_center, open_y), (x_center, open_y + max_wick_h)], fill=renk, width=2)
-            # Üst fitil (close'dan yukarı)
             draw.line([(x_center, close_y), (x_center, close_y - max_wick_h)], fill=renk, width=2)
-            # Gövde
-            draw.rectangle(
-                [x_center - candle_w/2, open_y, x_center + candle_w/2, close_y],
-                fill=renk, outline=renk
-            )
+            draw.rectangle([x_center - candle_w/2, close_y, x_center + candle_w/2, open_y],
+                           fill=renk, outline=renk)
 
-    # Bilgi yazısı
-    font_size = max(18, int(bh * 0.03))
+    font_size = max(16, int(bh * 0.03))
     try:
         font = ImageFont.truetype("arial.ttf", font_size)
     except:
@@ -834,14 +809,14 @@ def draw_projection(img_bytes, yon, puanlar, sembol="XAU/USD", m1_bolge=None, m1
         except:
             font = ImageFont.load_default()
 
-    draw.text((bx + 20, by + bh - 50), f"{sembol} | {yon} | Mum Projeksiyon", fill=renk, font=font)
+    draw.text((bx + 15, by + bh - 40), f"{sembol} | {yon} | Mum Projeksiyon", fill=renk, font=font)
 
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()
 
 # ==========================================
-# MESAJ KARTI (GÜNCELLENDİ)
+# MESAJ KARTI
 # ==========================================
 def build_card(a, sembol="XAU/USD", coklu=False):
     yon_emoji = {"LONG": "🟢", "SHORT": "🔴", "BEKLE": "🟡"}
@@ -853,7 +828,6 @@ def build_card(a, sembol="XAU/USD", coklu=False):
     except:
         guven = 0
 
-    # Acil sinyal başlığı
     baslik_ek = ""
     if guven >= 85 and a.get("yon") in ("LONG", "SHORT"):
         baslik_ek = "🚨 ACİL SİNYAL 🚨\n"
@@ -873,11 +847,17 @@ def build_card(a, sembol="XAU/USD", coklu=False):
 
     if a.get("yon") != "BEKLE":
         t.append(f"║  💰 GİRİŞ: {a.get('giris','?')}")
-        t.append(f"║  🛑 SL:    {a.get('stop_loss','?')}")
+        sl = a.get('stop_loss')
+        if sl:
+            t.append(f"║  🛑 SL:    {sl}")
+        else:
+            t.append(f"║  🛑 SL:    Hesaplanamadı")
         tps = a.get("take_profit", [])
         if tps:
             for i, tp in enumerate(tps, 1):
                 t.append(f"║  ✅ TP{i}:   {tp}")
+        else:
+            t.append(f"║  ✅ TP:    Hesaplanamadı")
         t.append(f"║  ⚖️ R/R:   {a.get('risk_odul','?')}")
     else:
         t.append("║  ⏸️  Sinyal yok")
@@ -888,7 +868,6 @@ def build_card(a, sembol="XAU/USD", coklu=False):
     t.append("╚══════════════════════════╝")
     t.append("")
 
-    # MTF uyum
     mtf = a.get("mtf_uyum", "")
     m5_trend = a.get("m5_trend", "")
     if mtf or m5_trend:
@@ -899,7 +878,6 @@ def build_card(a, sembol="XAU/USD", coklu=False):
             t.append(f"• Uyum: {mtf}")
         t.append("")
 
-    # Spike / Tick radarı
     spike = a.get("spike_riski", "")
     tick_uy = a.get("tick_uyarisi", "")
     if spike in ("var", "belirsiz") or tick_uy:
@@ -910,7 +888,6 @@ def build_card(a, sembol="XAU/USD", coklu=False):
             t.append(f"• {tick_uy}")
         t.append("")
 
-    # Sıkışma
     sik = a.get("sikisma_durumu", "")
     kir = a.get("kirilim_beklentisi", "")
     if sik == "var" or kir:
@@ -1015,7 +992,7 @@ def _menu_text():
         "🤖 *CHIVAS MT5 ANALİZ BOTU*\n\n"
         "📸 *Nasıl analiz yaparım?*\n"
         "• Tek fotoğraf (üst M1, alt M5) → caption: `GainX 999`\n"
-        "• Albüm (M5 + M1) → 2 foto tek seferde, caption: `GainX 999`\n\n"
+        "• Albüm (1. M1, 2. M5) → 2 foto tek seferde, caption: `GainX 999`\n\n"
         "⬇️ Aşağıdaki butonlardan seç:"
     )
 
@@ -1087,13 +1064,12 @@ def show_yardim(cid, message_id=None):
     text = (
         "❓ *YARDIM*\n\n"
         "📸 *Analiz nasıl yapılır?*\n"
-        "1. MT5'te grafiği aç (üstte M1, altta M5 veya tek M1)\n"
+        "1. MT5'te grafiği ayarla (üstte M1, altta M5 olacak şekilde)\n"
         "2. Screenshot al\n"
         "3. Bota gönder\n"
         "4. Caption'a sembolü yaz (örn: `GainX 999`)\n\n"
-        "📸 *Albüm (Çoklu TF):*\n"
-        "• 2 fotoğrafı tek seferde seç\n"
-        "• Sıra: M5 → M1\n"
+        "📸 *Alternatif: Albüm*\n"
+        "• 2 ayrı fotoğraf seç (1. M1, 2. M5)\n"
         "• Caption birine ekle\n\n"
         "🎯 *Sonuç işaretleme:*\n"
         "Analizden sonra ✅ Tuttu / ❌ Tutmadı butonuna bas\n\n"
@@ -1189,7 +1165,7 @@ def get_ready_albums():
     with ALBUM_LOCK:
         to_delete = []
         for mgid, data in ALBUM_BUFFER.items():
-            if len(data["photos"]) >= 2 or (now - data["ts"]) >= 3.0:
+            if len(data["photos"]) >= 2 or (now - data["ts"]) >= 2.0:
                 ready.append((mgid, data))
                 to_delete.append(mgid)
         for mgid in to_delete:
@@ -1197,7 +1173,7 @@ def get_ready_albums():
     return ready
 
 # ==========================================
-# ANALİZ AKIŞI (OTOMATİK FORMAT TANIMA)
+# ANALİZ AKIŞI
 # ==========================================
 def process_analysis(cid, images_bytes_list, sembol, coklu):
     send_msg(cid, f"⏳ {sembol} analiz ediliyor... ({'M5+M1' if coklu else 'Tek Grafik'})")
@@ -1217,14 +1193,16 @@ def process_analysis(cid, images_bytes_list, sembol, coklu):
             {"text": "❌ Tutmadı", "callback_data": f"sonuc:tutmadi:{aid}"}
         ]]}
 
-    # Mum projeksiyon çizimi
+    # Mum çizimi: her zaman M1 fotoğrafına (index 0)
     gorsel = None
     if a.get("yon") != "BEKLE":
+        m1_img = images_bytes_list[0]
         gorsel = draw_projection(
-            images_bytes_list[-1], a.get("yon"),
+            m1_img, a.get("yon"),
             a.get("yol_puani", []), sembol,
             m1_bolge=a.get("m1_bolge"),
-            m1_atr=a.get("m1_atr", 30)
+            m1_atr=a.get("m1_atr", 30),
+            tek_foto=(not coklu)
         )
 
     if gorsel:
@@ -1242,7 +1220,7 @@ def process_analysis(cid, images_bytes_list, sembol, coklu):
 def main():
     threading.Thread(target=run_health_server, daemon=True).start()
     init_db()
-    print(f"=== SENTETİK ANALİZ BOTU v9 BAŞLADI (GEMINI {GEMINI_MODEL}) ===", flush=True)
+    print(f"=== SENTETİK ANALİZ BOTU v12 BAŞLADI (GEMINI {GEMINI_MODEL}) ===", flush=True)
     offset = get_offset()
 
     while True:
@@ -1277,16 +1255,8 @@ def main():
                             continue
                         try:
                             img_bytes = get_file_bytes(msg["photo"][-1]["file_id"])
-                            # Otomatik format tanıma: dikey tek foto ise çoklu kabul et
-                            try:
-                                img_test = Image.open(io.BytesIO(img_bytes))
-                                w, h = img_test.size
-                                otomatik_coklu = h > w * 1.2  # dikey ise M1+M5 kabul et
-                                del img_test
-                            except:
-                                otomatik_coklu = False
-
-                            process_analysis(cid, [img_bytes], sembol, coklu=otomatik_coklu)
+                            # Tek fotoğraf: her zaman PROMPT_TEMPLATE (üst M1, alt M5)
+                            process_analysis(cid, [img_bytes], sembol, coklu=False)
                         except Exception as e:
                             send_msg(cid, f"❌ Hata: {str(e)[:200]}")
                     continue
@@ -1319,7 +1289,7 @@ def main():
                         continue
 
                     images = []
-                    for p in photos[:3]:
+                    for p in photos:
                         fid = p["photo"][-1]["file_id"]
                         images.append(get_file_bytes(fid))
 
