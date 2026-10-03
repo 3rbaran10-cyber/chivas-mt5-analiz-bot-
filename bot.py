@@ -1,5 +1,5 @@
 import os
-import io, json, base64, time, math, requests, threading, re, sqlite3
+import io, json, base64, time, math, requests, threading, re, sqlite3, random
 from PIL import Image, ImageDraw, ImageFont
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -9,12 +9,13 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
+# Sadece Pro model, küresel uç nokta
 GEMINI_MODEL = "gemini-3.1-pro-preview"
 GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
 
 GEMINI_LOCK = threading.Lock()
 SON_ISTEK_ZAMANI = [0.0]
-MIN_ISTEK_ARASI = 2.0  # thinking kapalı olduğu için 2sn yeterli
+MIN_ISTEK_ARASI = 8.0  # Trafik yumuşatma: istekler arası minimum 8 saniye
 
 # ==========================================
 # DESTEKLENEN SEMBOLLER
@@ -435,7 +436,7 @@ def gemini_istek_at(url, payload, headers):
         return resp
 
 # ==========================================
-# GEMINI ANALİZ (Thinking KAPALI)
+# GEMINI ANALİZ (Sadece Pro, Jitter'lı Backoff)
 # ==========================================
 def analyze_chart(images_bytes_list, cid, sembol, coklu=False):
     print(f"🔍 Analiz başladı (Sembol: {sembol}, Görsel: {len(images_bytes_list)}, Çoklu: {coklu}, Model: {GEMINI_MODEL})", flush=True)
@@ -456,7 +457,8 @@ def analyze_chart(images_bytes_list, cid, sembol, coklu=False):
         "contents": [{"parts": parts}],
         "generationConfig": {
             "temperature": 1.0,
-            "maxOutputTokens": 8192,
+            "maxOutputTokens": 4096,
+            "thinkingConfig": {"thinkingLevel": "low"},
             "responseMimeType": "application/json",
             "responseSchema": {
                 "type": "object",
@@ -499,12 +501,12 @@ def analyze_chart(images_bytes_list, cid, sembol, coklu=False):
 
     headers = {"Content-Type": "application/json", "x-goog-api-key": GEMINI_API_KEY}
 
-    pro_bekleme = [5, 15, 30, 60]
-
-    for deneme, bekleme in enumerate(pro_bekleme, 1):
+    # Kesikli üstel geri çekilme + jitter
+    max_deneme = 6
+    for deneme in range(max_deneme):
         try:
             resp = gemini_istek_at(GEMINI_URL, payload, headers)
-            print(f"🔍 Gemini HTTP = {resp.status_code} (Deneme {deneme}/{len(pro_bekleme)})", flush=True)
+            print(f"🔍 Gemini HTTP = {resp.status_code} (Deneme {deneme+1}/{max_deneme})", flush=True)
 
             if resp.status_code == 200:
                 a = json_parse_et(resp, cid)
@@ -515,15 +517,11 @@ def analyze_chart(images_bytes_list, cid, sembol, coklu=False):
                     return None
 
             elif resp.status_code in (429, 503):
-                retry_after = resp.headers.get("Retry-After")
-                if retry_after:
-                    try:
-                        bekleme = int(retry_after)
-                        print(f"⏳ Retry-After header: {bekleme} sn", flush=True)
-                    except:
-                        pass
-                if deneme < len(pro_bekleme):
-                    send_msg(cid, f"⏳ Pro model yoğun. {bekleme} sn sonra tekrar... ({deneme}/{len(pro_bekleme)})")
+                if deneme < max_deneme - 1:
+                    # Üstel geri çekilme: 2, 4, 8, 16, 32 saniye + jitter
+                    bekleme = (2 ** (deneme + 1)) + random.uniform(0, 1)
+                    print(f"⏳ 429 alındı, {bekleme:.1f} sn bekleniyor...", flush=True)
+                    send_msg(cid, f"⏳ Pro model yoğun. {bekleme:.0f} sn sonra tekrar... ({deneme+1}/{max_deneme})")
                     time.sleep(bekleme)
                     continue
                 else:
@@ -1031,7 +1029,7 @@ def process_analysis(cid, images_bytes_list, sembol, coklu):
 def main():
     threading.Thread(target=run_health_server, daemon=True).start()
     init_db()
-    print(f"=== SENTETİK ANALİZ BOTU v23 BAŞLADI (THINKING KAPALI) ===", flush=True)
+    print(f"=== SENTETİK ANALİZ BOTU v26 BAŞLADI (SADECE PRO - BACKOFF+JITTER) ===", flush=True)
     offset = get_offset()
 
     while True:
