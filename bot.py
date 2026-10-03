@@ -1,47 +1,7 @@
 import os
-import io, json, base64, time, math, requests, threading, re, sqlite3, random
+import io, json, base64, time, math, requests, threading, re, sqlite3
 from PIL import Image, ImageDraw, ImageFont
 from http.server import BaseHTTPRequestHandler, HTTPServer
-
-# ==========================================
-# GEÇİCİ TEŞHİS — İŞİN BİTİNCE SİL
-# ==========================================
-_API_KEY = os.environ.get("GEMINI_API_KEY")
-print("=" * 60, flush=True)
-print(f"TEŞHİS | API KEY VAR MI?: {'EVET' if _API_KEY else 'HAYIR'}", flush=True)
-print("=" * 60, flush=True)
-for _m in [
-    "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash",
-    "gemini-1.5-pro", "gemini-1.5-flash",
-    "gemini-3-pro-preview", "gemini-3.1-pro-preview",
-    "gemini-3.5-flash", "gemini-3.5-flash-lite",
-    "gemini-pro-latest", "gemini-flash-latest",
-]:
-    _url = f"https://generativelanguage.googleapis.com/v1beta/models/{_m}:generateContent"
-    try:
-        _resp = requests.post(
-            _url,
-            headers={"Content-Type": "application/json", "x-goog-api-key": _API_KEY},
-            json={"contents": [{"parts": [{"text": "test"}]}]},
-            timeout=15
-        )
-        _msg = ""
-        if _resp.status_code != 200:
-            try:
-                _msg = _resp.json().get("error", {}).get("message", "")[:180]
-            except:
-                _msg = _resp.text[:180]
-        else:
-            _msg = "ÇALIŞIYOR ✅"
-        print(f"TEŞHİS | {_resp.status_code} | {_m} | {_msg}", flush=True)
-    except Exception as _e:
-        print(f"TEŞHİS | ERR | {_m} | {str(_e)[:120]}", flush=True)
-print("=" * 60, flush=True)
-print("TEŞHİS BİTTİ", flush=True)
-print("=" * 60, flush=True)
-# ==========================================
-# GEÇİCİ TEŞHİS SONU
-# ==========================================
 
 # ==========================================
 # AYARLAR
@@ -54,7 +14,7 @@ GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_M
 
 GEMINI_LOCK = threading.Lock()
 SON_ISTEK_ZAMANI = [0.0]
-MIN_ISTEK_ARASI = 8.0
+MIN_ISTEK_ARASI = 3.0
 
 # ==========================================
 # DESTEKLENEN SEMBOLLER
@@ -470,23 +430,23 @@ def gemini_istek_at(url, payload, headers):
         gecen = time.time() - SON_ISTEK_ZAMANI[0]
         if gecen < MIN_ISTEK_ARASI:
             time.sleep(MIN_ISTEK_ARASI - gecen)
-        resp = requests.post(url, headers=headers, json=payload, timeout=120)
+        resp = requests.post(url, headers=headers, json=payload, timeout=300)
         SON_ISTEK_ZAMANI[0] = time.time()
         return resp
 
 # ==========================================
-# GEMINI ANALİZ
+# GEMINI ANALİZ (MAKSİMUM KALİTE)
 # ==========================================
 def analyze_chart(images_bytes_list, cid, sembol, coklu=False):
-    print(f"🔍 Analiz başladı (Sembol: {sembol}, Görsel: {len(images_bytes_list)}, Çoklu: {coklu}, Model: {GEMINI_MODEL})", flush=True)
+    print(f"🔍 Analiz başladı (Sembol: {sembol}, Görsel: {len(images_bytes_list)}, Çoklu: {coklu})", flush=True)
 
     parts = [{"text": (PROMPT_TEMPLATE_MULTI if coklu else PROMPT_TEMPLATE).format(sembol=sembol)}]
 
     for img_bytes in images_bytes_list:
         img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
-        img.thumbnail((1200, 1200))
+        img.thumbnail((1600, 1600))
         buf = io.BytesIO()
-        img.save(buf, format="JPEG", quality=80)
+        img.save(buf, format="JPEG", quality=95)
         b64 = base64.b64encode(buf.getvalue()).decode()
         del img, buf
         parts.append({"inline_data": {"mime_type": "image/jpeg", "data": b64}})
@@ -496,8 +456,8 @@ def analyze_chart(images_bytes_list, cid, sembol, coklu=False):
         "contents": [{"parts": parts}],
         "generationConfig": {
             "temperature": 1.0,
-            "maxOutputTokens": 4096,
-            "thinkingConfig": {"thinkingLevel": "low"},
+            "maxOutputTokens": 16384,
+            "thinkingConfig": {"thinkingLevel": "high"},
             "responseMimeType": "application/json",
             "responseSchema": {
                 "type": "object",
@@ -540,7 +500,9 @@ def analyze_chart(images_bytes_list, cid, sembol, coklu=False):
 
     headers = {"Content-Type": "application/json", "x-goog-api-key": GEMINI_API_KEY}
 
-    max_deneme = 6
+    bekleme_siralama = [5, 15, 30]
+    max_deneme = len(bekleme_siralama) + 1
+
     for deneme in range(max_deneme):
         try:
             resp = gemini_istek_at(GEMINI_URL, payload, headers)
@@ -549,28 +511,19 @@ def analyze_chart(images_bytes_list, cid, sembol, coklu=False):
             if resp.status_code == 200:
                 a = json_parse_et(resp, cid)
                 if a:
-                    print(f"✅ Pro model başarılı", flush=True)
+                    print(f"✅ Analiz başarılı", flush=True)
                     return a
                 else:
                     return None
 
             elif resp.status_code in (429, 503):
-                # TEŞHİS: Google'ın ne dediğini göster
-                _err_body = ""
-                try:
-                    _err_body = resp.json().get("error", {}).get("message", "")[:300]
-                except:
-                    _err_body = resp.text[:300]
-                print(f"🔬 429/503 DETAY | {resp.status_code} | {_err_body}", flush=True)
-
                 if deneme < max_deneme - 1:
-                    bekleme = (2 ** (deneme + 1)) + random.uniform(0, 1)
-                    print(f"⏳ 429 alındı, {bekleme:.1f} sn bekleniyor...", flush=True)
-                    send_msg(cid, f"⏳ Pro model yoğun. {bekleme:.0f} sn sonra tekrar... ({deneme+1}/{max_deneme})")
+                    bekleme = bekleme_siralama[deneme]
+                    send_msg(cid, f"⏳ Model yoğun. {bekleme} sn sonra tekrar... ({deneme+1}/{max_deneme})")
                     time.sleep(bekleme)
                     continue
                 else:
-                    send_msg(cid, f"❌ Pro model yanıt vermiyor.\nSebep: {_err_body[:200]}")
+                    send_msg(cid, "❌ Model şu an yanıt vermiyor. Lütfen biraz sonra tekrar deneyin.")
                     return None
             else:
                 send_msg(cid, f"❌ Gemini Hatası ({resp.status_code}): {resp.text[:400]}")
@@ -1074,7 +1027,7 @@ def process_analysis(cid, images_bytes_list, sembol, coklu):
 def main():
     threading.Thread(target=run_health_server, daemon=True).start()
     init_db()
-    print(f"=== SENTETİK ANALİZ BOTU v27 BAŞLADI (TEŞHİS MODU) ===", flush=True)
+    print(f"=== SENTETİK ANALİZ BOTU v28 BAŞLADI (MAKSİMUM KALİTE) ===", flush=True)
     offset = get_offset()
 
     while True:
