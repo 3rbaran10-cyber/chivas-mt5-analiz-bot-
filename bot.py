@@ -12,6 +12,10 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 GEMINI_MODEL = "gemini-3.1-pro-preview"
 GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
 
+# Global kilit: aynı anda sadece 1 Gemini isteği
+GEMINI_LOCK = threading.Lock()
+SON_ISTEK_ZAMANI = [0.0]
+
 # ==========================================
 # DESTEKLENEN SEMBOLLER
 # ==========================================
@@ -259,10 +263,11 @@ def save_analysis(cid, sembol, a):
 def update_sonuc(analiz_id, sonuc):
     try:
         conn = sqlite3.connect(DB_PATH)
-        conn.execute("UPDATE analyses SET sonuc=? WHERE id=? AND sonuc IS NULL", (sonuc, analiz_id))
+        cur = conn.execute("UPDATE analyses SET sonuc=? WHERE id=? AND sonuc IS NULL", (sonuc, analiz_id))
+        degisti = cur.rowcount
         conn.commit()
         conn.close()
-        return True
+        return degisti > 0
     except Exception as e:
         print(f"update_sonuc hatası: {e}", flush=True)
         return False
@@ -447,6 +452,26 @@ def check_rate_limit(cid):
     return True
 
 # ==========================================
+# GEMINI İSTEK YÖNETİCİSİ (Global Kilit)
+# ==========================================
+def gemini_istek_at(payload, headers, cid, deneme_etiketi=""):
+    """
+    Global kilit ile tek seferde 1 istek atar.
+    Ayrıca istekler arası minimum 3 saniye bekler.
+    """
+    global SON_ISTEK_ZAMANI
+
+    with GEMINI_LOCK:
+        # İstekler arası minimum 3 saniye (RPM'i düşürmek için)
+        gecen = time.time() - SON_ISTEK_ZAMANI[0]
+        if gecen < 3.0:
+            time.sleep(3.0 - gecen)
+
+        resp = requests.post(GEMINI_URL, headers=headers, json=payload, timeout=180)
+        SON_ISTEK_ZAMANI[0] = time.time()
+        return resp
+
+# ==========================================
 # GEMINI ANALİZ
 # ==========================================
 def analyze_chart(images_bytes_list, cid, sembol, coklu=False):
@@ -456,9 +481,9 @@ def analyze_chart(images_bytes_list, cid, sembol, coklu=False):
 
     for img_bytes in images_bytes_list:
         img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
-        img.thumbnail((1400, 1400))
+        img.thumbnail((1200, 1200))  # 1400 → 1200, token tasarrufu
         buf = io.BytesIO()
-        img.save(buf, format="JPEG", quality=80)
+        img.save(buf, format="JPEG", quality=75)  # 80 → 75, token tasarrufu
         b64 = base64.b64encode(buf.getvalue()).decode()
         del img, buf
         parts.append({"inline_data": {"mime_type": "image/jpeg", "data": b64}})
@@ -468,8 +493,8 @@ def analyze_chart(images_bytes_list, cid, sembol, coklu=False):
         "contents": [{"parts": parts}],
         "generationConfig": {
             "temperature": 1.0,
-            "maxOutputTokens": 9000,
-            "thinkingConfig": {"thinkingLevel": "high"},
+            "maxOutputTokens": 4000,
+            "thinkingConfig": {"thinkingLevel": "low"},
             "responseMimeType": "application/json",
             "responseSchema": {
                 "type": "object",
@@ -512,11 +537,13 @@ def analyze_chart(images_bytes_list, cid, sembol, coklu=False):
 
     headers = {"Content-Type": "application/json", "x-goog-api-key": GEMINI_API_KEY}
 
-    max_deneme = 5
-    bekleme = 5
+    # Bekleme süreleri: 10sn → 30sn → 60sn → 120sn (agresif)
+    bekleme_siralama = [10, 30, 60, 120]
+    max_deneme = len(bekleme_siralama) + 1
+
     for deneme in range(max_deneme):
         try:
-            resp = requests.post(GEMINI_URL, headers=headers, json=payload, timeout=180)
+            resp = gemini_istek_at(payload, headers, cid)
             print(f"🔍 Gemini HTTP = {resp.status_code} (Deneme {deneme+1}/{max_deneme})", flush=True)
 
             if resp.status_code == 200:
@@ -578,24 +605,23 @@ def analyze_chart(images_bytes_list, cid, sembol, coklu=False):
                 print(f"🎯 M1 bölge: {a.get('m1_bolge')} | Yön: {a.get('yon')} | Giriş: {a.get('giris')}", flush=True)
                 return a
 
-            elif resp.status_code == 429:
+            elif resp.status_code in (429, 503):
+                # Retry-After header'ı varsa onu kullan
+                retry_after = resp.headers.get("Retry-After")
+                if retry_after:
+                    try:
+                        bekleme = int(retry_after)
+                    except:
+                        bekleme = bekleme_siralama[deneme] if deneme < len(bekleme_siralama) else 120
+                else:
+                    bekleme = bekleme_siralama[deneme] if deneme < len(bekleme_siralama) else 120
+
                 if deneme < max_deneme - 1:
                     send_msg(cid, f"⏳ Pro model yoğun. {bekleme} sn sonra tekrar... ({deneme+1}/{max_deneme})")
                     time.sleep(bekleme)
-                    bekleme *= 2
                     continue
                 else:
                     send_msg(cid, "❌ Pro model şu an yanıt vermiyor. Lütfen biraz sonra tekrar deneyin.")
-                    return None
-
-            elif resp.status_code == 503:
-                if deneme < max_deneme - 1:
-                    send_msg(cid, f"⏳ Gemini yoğun. {bekleme} sn sonra tekrar... ({deneme+1}/{max_deneme})")
-                    time.sleep(bekleme)
-                    bekleme *= 2
-                    continue
-                else:
-                    send_msg(cid, "❌ Gemini şu an aşırı yoğun.")
                     return None
             else:
                 send_msg(cid, f"❌ Gemini Hatası ({resp.status_code}): {resp.text[:400]}")
@@ -1046,7 +1072,7 @@ def process_analysis(cid, images_bytes_list, sembol, coklu):
 def main():
     threading.Thread(target=run_health_server, daemon=True).start()
     init_db()
-    print(f"=== SENTETİK ANALİZ BOTU v13 BAŞLADI (GEMINI {GEMINI_MODEL}) ===", flush=True)
+    print(f"=== SENTETİK ANALİZ BOTU v14 BAŞLADI (GEMINI {GEMINI_MODEL}) ===", flush=True)
     offset = get_offset()
 
     while True:
