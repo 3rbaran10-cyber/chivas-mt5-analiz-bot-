@@ -9,29 +9,45 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
-GEMINI_MODEL = "gemini-3.5-flash-lite"
+GEMINI_MODEL = "gemini-3.1-pro-preview"
 GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
 
 # ==========================================
-# DESTEKLENEN SEMBOLLER (Görseldeki güncel liste)
+# DESTEKLENEN SEMBOLLER
 # ==========================================
 ALLOWED_SYMBOLS = [
-    "BreakX 1800",
     "GainX 1200",
-    "GainX 800",
     "GainX 999",
     "MAX GainX 1000",
     "MAX GainX 2000",
     "MAX PainX 1000",
     "MAX PainX 2000",
     "PainX 1200",
+    "PainX 400",
+    "PainX 800",
     "PainX 999",
-    "SwitchX 1800",
-    "TrendX 1800",
 ]
 ALLOWED_SYMBOLS_NORM = {
     s.lower().replace("-", " ").replace("/", " ").strip(): s for s in ALLOWED_SYMBOLS
 }
+
+# ==========================================
+# SEMBOL BAŞINA SL/TP MESAFESİ (PUAN)
+# ==========================================
+# SL = mesafe, TP1 = mesafe, TP2 = mesafe x 1.2
+SYMBOL_MESAFE = {
+    "GainX 1200":      9,
+    "GainX 999":       22,
+    "MAX GainX 1000":  72,
+    "MAX GainX 2000":  193,
+    "MAX PainX 1000":  156,
+    "MAX PainX 2000":  225,
+    "PainX 1200":      9,
+    "PainX 400":       10,
+    "PainX 800":       7,
+    "PainX 999":       19,
+}
+VARSAYILAN_MESAFE = 20
 
 # ==========================================
 # HEALTH SERVER
@@ -49,45 +65,26 @@ def run_health_server():
     HTTPServer(("0.0.0.0", port), Health).serve_forever()
 
 # ==========================================
-# ORTAK SEVİYE KURALLARI (her iki prompt için)
+# ORTAK KURALLAR
 # ==========================================
 SEVIYE_KURALLARI = """
 M1 ODAKLI İŞLEM:
-Bu görselde M30, M15, M1 birlikte olabilir. Ama GİRİŞ/SL/TP SADECE M1 yapısına göre verilir.
+Bu görselde M30, M15, M1 birlikte olabilir. Ama GİRİŞ SADECE M1 yapısına göre verilir.
 M30 ve M15 SADECE TREND ONAYI için kullanılır (yön doğrulaması).
 
-VOLATİLİTE ÖLÇÜMÜ (İLK İŞ):
-M1 grafiğinde son 20 mumu incele.
-Ortalama mum boyutunu (high - low) puan cinsinden tahmin et.
-Bunu JSON'a "m1_atr" olarak yaz.
+GİRİŞ NOKTASI:
+Kullanıcı KISA mesafeli işlem istiyor (1-2 dakikalık).
+Giriş noktasını M1'deki güncel fiyata YAKIN ver.
+Anlık fiyattan en fazla 5-10 puan uzakta olsun.
 
-SL/TP MESAFESİ (ÇOK ÖNEMLİ):
-Kullanıcı KISA mesafeli işlem istiyor. SL/TP M1 üzerinde yakın seviyelerde olmalı.
+SL/TP HESABI:
+Sen SL/TP mesafesi VERME. Bu mesafeler sistem tarafından sembol başına sabit olarak atanmıştır.
+Sen sadece şunları ver: yön, giriş fiyatı, analiz.
 
-1. SL mesafesi = m1_atr x 2 (sabit çarpan).
-   Örnek: m1_atr = 30 ise → SL ≈ 60 puan. m1_atr = 50 ise → SL ≈ 100 puan.
-2. Minimum SL = 20 puan. Maksimum SL = m1_atr x 4. Bu aralığın dışına çıkma.
-3. SL = M1'deki en yakın yapısal seviyenin (swing low/high) hemen ötesi.
-4. TP1 = SL x 1.5
-5. TP2 = SL x 2.5
-6. R/R 1:1.5 altındaysa → 'BEKLE'.
-7. M1'de net yapı yoksa → 'BEKLE'.
-
-ÖRNEK (m1_atr = 40):
-- Giriş: 106064
-- SL: 105984 (80 puan = ATR x 2)
-- TP1: 106184 (120 puan = SL x 1.5)
-- TP2: 106264 (200 puan = SL x 2.5)
-
-ÖNEMLİ: 500+ puan SL VERME. Bu semboller 100.000 civarında olsa bile
-M1 grafiğindeki mum boyutu 20-80 puan arasındadır. SL/TP bu ölçekte kalmalı.
-
-YOL PUANI SIRALAMASI (ÇOK ÖNEMLİ):
+YOL PUANI SIRALAMASI:
 yol_puani dizisini YÖN ile uyumlu sırala.
 - SHORT yönünde: ilk puan EN YÜKSEK (örn: 90), son puan EN DÜŞÜK (örn: 10) olmalı.
-  Yani fiyat düşecek → puanlar azalmalı: [90, 75, 60, 45, 30, 20, 10]
 - LONG yönünde: ilk puan EN DÜŞÜK (örn: 10), son puan EN YÜKSEK (örn: 90) olmalı.
-  Yani fiyat yükselecek → puanlar artmalı: [10, 20, 30, 45, 60, 75, 90]
 - BEKLE yönünde: yol_puani dizisi göndermek zorunlu değil.
 """
 
@@ -103,7 +100,7 @@ GÖREV:
 2. Tüm TF'leri birlikte değerlendir:
    - M30 → ana trend yönü
    - M15 → orta vade yapı ve onay
-   - M1  → GİRİŞ/SL/TP için TEK referans
+   - M1  → GİRİŞ için TEK referans
 3. Sonraki 2 dakikalık fiyat projeksiyonunu tahmin et (2 dakika = 2 M1 mumu).
 
 """ + SEVIYE_KURALLARI + """
@@ -122,13 +119,8 @@ KARAR KURALLARI:
 
 MUM SAYISI: M1 grafiğinde 2 dakika = 2 mum. 1-3 arası ver. 5+ verme.
 
-M1 BÖLGE TESPİTİ (ÇOK ÖNEMLİ):
+M1 BÖLGE TESPİTİ:
 Görselde M1 grafiğinin konumunu YÜZDE olarak bul.
-M1 etiketi görselin HERHANGİ bir yerinde olabilir:
-- Sol üst, sağ üst, sol alt, sağ alt, ortada — nerede olursa olsun bul.
-MT5'te tipik düzen: sol büyük grafik M30, sağ üst M15, sağ alt M1 olabilir.
-Ama sen etikete bakarak M1'in yerini doğru tespit et.
-Bölge değerleri:
 - x: sol kenardan uzaklık (0-100)
 - y: üst kenardan uzaklık (0-100)
 - w: genişlik (0-100)
@@ -139,8 +131,7 @@ FORMAT: SADECE geçerli JSON. Sayılarda NOKTA kullan. Türkçe yaz.
 
 JSON ŞEMASI:
 - sembol, yon ("LONG"|"SHORT"|"BEKLE"), guven (0-100)
-- giris, stop_loss, take_profit (array), risk_odul
-- m1_atr (integer, M1 ortalama mum boyutu)
+- giris (string, M1'deki güncel fiyata yakın)
 - trend_m1, vwap_durumu, fvg_tespit, likidite_durumu
 - destekler (array), direncler (array), formasyonlar (array)
 - kullanilan_teknikler (array)
@@ -183,7 +174,6 @@ MUM SAYISI: M1'de 2 dakika = 2 mum. 1-3 arası ver.
 
 M1 BÖLGE TESPİTİ:
 M1 grafiğinin konumunu YÜZDE olarak bul.
-M1 etiketi görselin HERHANGİ bir yerinde olabilir (sol üst, sağ alt, ortada vb.).
 - x, y, w, h (0-100 arası tam sayı)
 - Tek grafik varsa: x=0, y=0, w=100, h=100 ver.
 
@@ -191,8 +181,7 @@ FORMAT: SADECE geçerli JSON. Sayılarda NOKTA kullan. Türkçe yaz.
 
 JSON ŞEMASI:
 - sembol, yon ("LONG"|"SHORT"|"BEKLE"), guven (0-100)
-- giris, stop_loss, take_profit (array), risk_odul
-- m1_atr (integer, M1 ortalama mum boyutu)
+- giris (string, M1'deki güncel fiyata yakın)
 - trend_m1, vwap_durumu, fvg_tespit, likidite_durumu
 - destekler (array), direncler (array), formasyonlar (array)
 - kullanilan_teknikler (array)
@@ -412,6 +401,37 @@ def caption_to_symbol(caption):
     return None
 
 # ==========================================
+# SL/TP HESAPLAMA
+# ==========================================
+def hesapla_sl_tp(sembol, giris_degeri, yon):
+    if yon not in ("LONG", "SHORT"):
+        return None
+
+    mesafe = SYMBOL_MESAFE.get(sembol, VARSAYILAN_MESAFE)
+
+    try:
+        giris = float(str(giris_degeri).replace(",", "."))
+    except (ValueError, TypeError):
+        return None
+
+    if yon == "SHORT":
+        sl = giris + mesafe
+        tp1 = giris - mesafe
+        tp2 = giris - mesafe * 1.2
+    else:
+        sl = giris - mesafe
+        tp1 = giris + mesafe
+        tp2 = giris + mesafe * 1.2
+
+    return {
+        "giris": round(giris, 2),
+        "stop_loss": round(sl, 2),
+        "tp1": round(tp1, 2),
+        "tp2": round(tp2, 2),
+        "mesafe": mesafe,
+    }
+
+# ==========================================
 # RATE LIMIT
 # ==========================================
 USER_COOLDOWN = {}
@@ -431,7 +451,7 @@ def check_rate_limit(cid):
 # GEMINI ANALİZ
 # ==========================================
 def analyze_chart(images_bytes_list, cid, sembol, coklu=False):
-    print(f"🔍 Analiz başladı (Sembol: {sembol}, Görsel: {len(images_bytes_list)}, Çoklu: {coklu})", flush=True)
+    print(f"🔍 Analiz başladı (Sembol: {sembol}, Görsel: {len(images_bytes_list)}, Çoklu: {coklu}, Model: {GEMINI_MODEL})", flush=True)
 
     parts = [{"text": (PROMPT_TEMPLATE_MULTI if coklu else PROMPT_TEMPLATE).format(sembol=sembol)}]
 
@@ -448,9 +468,9 @@ def analyze_chart(images_bytes_list, cid, sembol, coklu=False):
     payload = {
         "contents": [{"parts": parts}],
         "generationConfig": {
-            "temperature": 0.3,
-            "maxOutputTokens": 32768,
-            "thinkingConfig": {"thinkingBudget": 1024},
+            "temperature": 1.0,
+            "maxOutputTokens": 4096,
+            "thinkingConfig": {"thinkingLevel": "high"},
             "responseMimeType": "application/json",
             "responseSchema": {
                 "type": "object",
@@ -459,10 +479,6 @@ def analyze_chart(images_bytes_list, cid, sembol, coklu=False):
                     "yon": {"type": "string", "enum": ["LONG", "SHORT", "BEKLE"]},
                     "guven": {"type": "integer"},
                     "giris": {"type": "string"},
-                    "stop_loss": {"type": "string"},
-                    "take_profit": {"type": "array", "items": {"type": "string"}},
-                    "risk_odul": {"type": "string"},
-                    "m1_atr": {"type": "integer"},
                     "trend_m1": {"type": "string"},
                     "vwap_durumu": {"type": "string"},
                     "fvg_tespit": {"type": "string"},
@@ -489,8 +505,8 @@ def analyze_chart(images_bytes_list, cid, sembol, coklu=False):
                         }
                     }
                 },
-                "required": ["sembol", "yon", "guven", "kisa_analiz", "gerekce", "yol_puani",
-                             "kalan_mum", "mum_yonu", "hareket_aciklamasi", "m1_bolge", "m1_atr"]
+                "required": ["sembol", "yon", "guven", "giris", "kisa_analiz", "gerekce",
+                             "yol_puani", "kalan_mum", "mum_yonu", "hareket_aciklamasi", "m1_bolge"]
             }
         }
     }
@@ -549,11 +565,8 @@ def analyze_chart(images_bytes_list, cid, sembol, coklu=False):
                         send_msg(cid, f"❌ Gemini JSON vermedi. (Sebep: {fr})")
                         return None
 
-                for k in ["giris", "stop_loss"]:
-                    if k in a:
-                        a[k] = temizle_sayi(a[k])
-                if "take_profit" in a and isinstance(a["take_profit"], list):
-                    a["take_profit"] = [temizle_sayi(x) for x in a["take_profit"]]
+                if "giris" in a:
+                    a["giris"] = temizle_sayi(a["giris"])
 
                 try:
                     g = int(a.get("guven", 0))
@@ -562,7 +575,7 @@ def analyze_chart(images_bytes_list, cid, sembol, coklu=False):
                 if g < 65:
                     a["yon"] = "BEKLE"
 
-                print(f"🎯 M1 bölge: {a.get('m1_bolge')} | M1 ATR: {a.get('m1_atr')} | Yön: {a.get('yon')}", flush=True)
+                print(f"🎯 M1 bölge: {a.get('m1_bolge')} | Yön: {a.get('yon')} | Giriş: {a.get('giris')}", flush=True)
                 return a
 
             elif resp.status_code == 503:
@@ -683,8 +696,6 @@ def build_card(a, sembol="XAU/USD", coklu=False):
     t.append("╠══════════════════════════╣")
     t.append(f"║  {e} YÖN: {a.get('yon','?')}")
     t.append(f"║  🎯 GÜVEN: %{a.get('guven','?')}")
-    if a.get('m1_atr'):
-        t.append(f"║  📏 M1 ATR: {a.get('m1_atr')} puan")
     t.append("╠══════════════════════════╣")
 
     if a.get("yon") != "BEKLE":
@@ -850,7 +861,11 @@ def show_istatistik(cid, message_id=None):
         send_msg(cid, text, "Markdown", _ana_menu_buton())
 
 def show_semboller(cid, message_id=None):
-    text = "📋 *DESTEKLENEN SEMBOLLER*\n\n" + "\n".join([f"• {s}" for s in ALLOWED_SYMBOLS])
+    lines = ["📋 *DESTEKLENEN SEMBOLLER*", ""]
+    for s in ALLOWED_SYMBOLS:
+        m = SYMBOL_MESAFE.get(s, VARSAYILAN_MESAFE)
+        lines.append(f"• {s} — SL/TP: {m} puan")
+    text = "\n".join(lines)
     if message_id:
         edit_message_text(cid, message_id, text, "Markdown", _ana_menu_buton())
     else:
@@ -980,6 +995,19 @@ def process_analysis(cid, images_bytes_list, sembol, coklu):
         send_msg(cid, "❌ Analiz başarısız, tekrar deneyin.")
         return
 
+    if a.get("yon") in ("LONG", "SHORT"):
+        hesap = hesapla_sl_tp(sembol, a.get("giris"), a.get("yon"))
+        if hesap:
+            a["giris"] = str(hesap["giris"])
+            a["stop_loss"] = str(hesap["stop_loss"])
+            a["take_profit"] = [str(hesap["tp1"]), str(hesap["tp2"])]
+            a["risk_odul"] = "1:1"
+            print(f"🧮 Bot hesabı: SL={hesap['stop_loss']} | TP1={hesap['tp1']} | TP2={hesap['tp2']} | Mesafe={hesap['mesafe']}", flush=True)
+        else:
+            print(f"⚠️ SL/TP hesabı başarısız. Giriş: {a.get('giris')}, Yön: {a.get('yon')}", flush=True)
+            a["yon"] = "BEKLE"
+            a["uyari"] = "Giriş fiyatı okunamadı."
+
     aid = save_analysis(cid, sembol, a)
     kart = build_card(a, sembol, coklu=coklu)
 
@@ -1012,7 +1040,7 @@ def process_analysis(cid, images_bytes_list, sembol, coklu):
 def main():
     threading.Thread(target=run_health_server, daemon=True).start()
     init_db()
-    print(f"=== SENTETİK ANALİZ BOTU v8 BAŞLADI (GEMINI {GEMINI_MODEL}) ===", flush=True)
+    print(f"=== SENTETİK ANALİZ BOTU v11 BAŞLADI (GEMINI {GEMINI_MODEL}) ===", flush=True)
     offset = get_offset()
 
     while True:
