@@ -486,8 +486,8 @@ def analyze_chart(images_bytes_list, cid, sembol, coklu=False):
         "contents": [{"parts": parts}],
         "generationConfig": {
             "temperature": 1.0,
-            "maxOutputTokens": 4096,
-            "thinkingConfig": {"thinkingLevel": "low"},
+            "maxOutputTokens": 8192,
+            "thinkingConfig": {"thinkingLevel": "high"},
             "responseMimeType": "application/json",
             "responseSchema": {
                 "type": "object",
@@ -1066,7 +1066,7 @@ def process_analysis(cid, images_bytes_list, sembol, coklu):
 def main():
     threading.Thread(target=run_health_server, daemon=True).start()
     init_db()
-    print(f"=== SENTETİK ANALİZ BOTU v20 BAŞLADI (SADECE PRO) ===", flush=True)
+    print(f"=== SENTETİK ANALİZ BOTU v21 BAŞLADI (SADECE PRO) ===", flush=True)
     offset = get_offset()
 
     while True:
