@@ -14,7 +14,7 @@ GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_M
 
 GEMINI_LOCK = threading.Lock()
 SON_ISTEK_ZAMANI = [0.0]
-MIN_ISTEK_ARASI = 5.0
+MIN_ISTEK_ARASI = 2.0  # thinking kapalı olduğu için 2sn yeterli
 
 # ==========================================
 # DESTEKLENEN SEMBOLLER
@@ -430,12 +430,12 @@ def gemini_istek_at(url, payload, headers):
         gecen = time.time() - SON_ISTEK_ZAMANI[0]
         if gecen < MIN_ISTEK_ARASI:
             time.sleep(MIN_ISTEK_ARASI - gecen)
-        resp = requests.post(url, headers=headers, json=payload, timeout=180)
+        resp = requests.post(url, headers=headers, json=payload, timeout=120)
         SON_ISTEK_ZAMANI[0] = time.time()
         return resp
 
 # ==========================================
-# GEMINI ANALİZ (Retry-After Destekli)
+# GEMINI ANALİZ (Thinking KAPALI)
 # ==========================================
 def analyze_chart(images_bytes_list, cid, sembol, coklu=False):
     print(f"🔍 Analiz başladı (Sembol: {sembol}, Görsel: {len(images_bytes_list)}, Çoklu: {coklu}, Model: {GEMINI_MODEL})", flush=True)
@@ -457,7 +457,6 @@ def analyze_chart(images_bytes_list, cid, sembol, coklu=False):
         "generationConfig": {
             "temperature": 1.0,
             "maxOutputTokens": 8192,
-            "thinkingConfig": {"thinkingLevel": "high"},
             "responseMimeType": "application/json",
             "responseSchema": {
                 "type": "object",
@@ -500,7 +499,7 @@ def analyze_chart(images_bytes_list, cid, sembol, coklu=False):
 
     headers = {"Content-Type": "application/json", "x-goog-api-key": GEMINI_API_KEY}
 
-    pro_bekleme = [15, 30, 60, 120, 240]
+    pro_bekleme = [5, 15, 30, 60]
 
     for deneme, bekleme in enumerate(pro_bekleme, 1):
         try:
@@ -1032,7 +1031,7 @@ def process_analysis(cid, images_bytes_list, sembol, coklu):
 def main():
     threading.Thread(target=run_health_server, daemon=True).start()
     init_db()
-    print(f"=== SENTETİK ANALİZ BOTU v22 BAŞLADI (Retry-After Destekli) ===", flush=True)
+    print(f"=== SENTETİK ANALİZ BOTU v23 BAŞLADI (THINKING KAPALI) ===", flush=True)
     offset = get_offset()
 
     while True:
