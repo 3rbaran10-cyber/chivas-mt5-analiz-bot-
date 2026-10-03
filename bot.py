@@ -15,6 +15,7 @@ GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_M
 # Global kilit: aynı anda sadece 1 Gemini isteği
 GEMINI_LOCK = threading.Lock()
 SON_ISTEK_ZAMANI = [0.0]
+MIN_ISTEK_ARASI = 3.0  # İstekler arası minimum bekleme (saniye)
 
 # ==========================================
 # DESTEKLENEN SEMBOLLER
@@ -454,19 +455,12 @@ def check_rate_limit(cid):
 # ==========================================
 # GEMINI İSTEK YÖNETİCİSİ (Global Kilit)
 # ==========================================
-def gemini_istek_at(payload, headers, cid, deneme_etiketi=""):
-    """
-    Global kilit ile tek seferde 1 istek atar.
-    Ayrıca istekler arası minimum 3 saniye bekler.
-    """
+def gemini_istek_at(payload, headers):
     global SON_ISTEK_ZAMANI
-
     with GEMINI_LOCK:
-        # İstekler arası minimum 3 saniye (RPM'i düşürmek için)
         gecen = time.time() - SON_ISTEK_ZAMANI[0]
-        if gecen < 3.0:
-            time.sleep(3.0 - gecen)
-
+        if gecen < MIN_ISTEK_ARASI:
+            time.sleep(MIN_ISTEK_ARASI - gecen)
         resp = requests.post(GEMINI_URL, headers=headers, json=payload, timeout=180)
         SON_ISTEK_ZAMANI[0] = time.time()
         return resp
@@ -481,9 +475,9 @@ def analyze_chart(images_bytes_list, cid, sembol, coklu=False):
 
     for img_bytes in images_bytes_list:
         img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
-        img.thumbnail((1200, 1200))  # 1400 → 1200, token tasarrufu
+        img.thumbnail((1200, 1200))
         buf = io.BytesIO()
-        img.save(buf, format="JPEG", quality=75)  # 80 → 75, token tasarrufu
+        img.save(buf, format="JPEG", quality=75)
         b64 = base64.b64encode(buf.getvalue()).decode()
         del img, buf
         parts.append({"inline_data": {"mime_type": "image/jpeg", "data": b64}})
@@ -537,13 +531,12 @@ def analyze_chart(images_bytes_list, cid, sembol, coklu=False):
 
     headers = {"Content-Type": "application/json", "x-goog-api-key": GEMINI_API_KEY}
 
-    # Bekleme süreleri: 10sn → 30sn → 60sn → 120sn (agresif)
     bekleme_siralama = [10, 30, 60, 120]
     max_deneme = len(bekleme_siralama) + 1
 
     for deneme in range(max_deneme):
         try:
-            resp = gemini_istek_at(payload, headers, cid)
+            resp = gemini_istek_at(payload, headers)
             print(f"🔍 Gemini HTTP = {resp.status_code} (Deneme {deneme+1}/{max_deneme})", flush=True)
 
             if resp.status_code == 200:
@@ -606,7 +599,6 @@ def analyze_chart(images_bytes_list, cid, sembol, coklu=False):
                 return a
 
             elif resp.status_code in (429, 503):
-                # Retry-After header'ı varsa onu kullan
                 retry_after = resp.headers.get("Retry-After")
                 if retry_after:
                     try:
@@ -1072,7 +1064,7 @@ def process_analysis(cid, images_bytes_list, sembol, coklu):
 def main():
     threading.Thread(target=run_health_server, daemon=True).start()
     init_db()
-    print(f"=== SENTETİK ANALİZ BOTU v14 BAŞLADI (GEMINI {GEMINI_MODEL}) ===", flush=True)
+    print(f"=== SENTETİK ANALİZ BOTU v15 BAŞLADI (GEMINI {GEMINI_MODEL}) ===", flush=True)
     offset = get_offset()
 
     while True:
