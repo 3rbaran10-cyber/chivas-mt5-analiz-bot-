@@ -34,7 +34,6 @@ ALLOWED_SYMBOLS_NORM = {
 # ==========================================
 # SEMBOL BAŞINA SL/TP MESAFESİ (PUAN)
 # ==========================================
-# SL = mesafe, TP1 = mesafe, TP2 = mesafe x 1.2
 SYMBOL_MESAFE = {
     "GainX 1200":      9,
     "GainX 999":       22,
@@ -469,7 +468,7 @@ def analyze_chart(images_bytes_list, cid, sembol, coklu=False):
         "contents": [{"parts": parts}],
         "generationConfig": {
             "temperature": 1.0,
-            "maxOutputTokens": 4096,
+            "maxOutputTokens": 9000,
             "thinkingConfig": {"thinkingLevel": "high"},
             "responseMimeType": "application/json",
             "responseSchema": {
@@ -513,11 +512,12 @@ def analyze_chart(images_bytes_list, cid, sembol, coklu=False):
 
     headers = {"Content-Type": "application/json", "x-goog-api-key": GEMINI_API_KEY}
 
-    max_deneme = 3
+    max_deneme = 5
+    bekleme = 5
     for deneme in range(max_deneme):
         try:
             resp = requests.post(GEMINI_URL, headers=headers, json=payload, timeout=180)
-            print(f"🔍 Gemini HTTP = {resp.status_code}", flush=True)
+            print(f"🔍 Gemini HTTP = {resp.status_code} (Deneme {deneme+1}/{max_deneme})", flush=True)
 
             if resp.status_code == 200:
                 r = resp.json()
@@ -578,19 +578,25 @@ def analyze_chart(images_bytes_list, cid, sembol, coklu=False):
                 print(f"🎯 M1 bölge: {a.get('m1_bolge')} | Yön: {a.get('yon')} | Giriş: {a.get('giris')}", flush=True)
                 return a
 
+            elif resp.status_code == 429:
+                if deneme < max_deneme - 1:
+                    send_msg(cid, f"⏳ Pro model yoğun. {bekleme} sn sonra tekrar... ({deneme+1}/{max_deneme})")
+                    time.sleep(bekleme)
+                    bekleme *= 2
+                    continue
+                else:
+                    send_msg(cid, "❌ Pro model şu an yanıt vermiyor. Lütfen biraz sonra tekrar deneyin.")
+                    return None
+
             elif resp.status_code == 503:
                 if deneme < max_deneme - 1:
-                    bekleme = (deneme + 1) * 10
                     send_msg(cid, f"⏳ Gemini yoğun. {bekleme} sn sonra tekrar... ({deneme+1}/{max_deneme})")
                     time.sleep(bekleme)
+                    bekleme *= 2
                     continue
                 else:
                     send_msg(cid, "❌ Gemini şu an aşırı yoğun.")
                     return None
-            elif resp.status_code == 429:
-                send_msg(cid, "⚠️ Çok fazla istek. 30 sn bekleyin.")
-                time.sleep(30)
-                continue
             else:
                 send_msg(cid, f"❌ Gemini Hatası ({resp.status_code}): {resp.text[:400]}")
                 return None
@@ -1040,7 +1046,7 @@ def process_analysis(cid, images_bytes_list, sembol, coklu):
 def main():
     threading.Thread(target=run_health_server, daemon=True).start()
     init_db()
-    print(f"=== SENTETİK ANALİZ BOTU v11 BAŞLADI (GEMINI {GEMINI_MODEL}) ===", flush=True)
+    print(f"=== SENTETİK ANALİZ BOTU v13 BAŞLADI (GEMINI {GEMINI_MODEL}) ===", flush=True)
     offset = get_offset()
 
     while True:
