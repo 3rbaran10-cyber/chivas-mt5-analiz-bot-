@@ -9,14 +9,12 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
-# Sadece Pro model, küresel uç nokta
 GEMINI_MODEL = "gemini-3.1-pro-preview"
 GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
 
-# Global kilit: aynı anda sadece 1 Gemini isteği
 GEMINI_LOCK = threading.Lock()
 SON_ISTEK_ZAMANI = [0.0]
-MIN_ISTEK_ARASI = 3.0  # Pro için istekler arası minimum 3 saniye
+MIN_ISTEK_ARASI = 5.0  # Pro için istekler arası minimum 5 saniye
 
 # ==========================================
 # DESTEKLENEN SEMBOLLER
@@ -476,9 +474,9 @@ def analyze_chart(images_bytes_list, cid, sembol, coklu=False):
 
     for img_bytes in images_bytes_list:
         img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
-        img.thumbnail((1400, 1400))
+        img.thumbnail((1200, 1200))
         buf = io.BytesIO()
-        img.save(buf, format="JPEG", quality=85)
+        img.save(buf, format="JPEG", quality=80)
         b64 = base64.b64encode(buf.getvalue()).decode()
         del img, buf
         parts.append({"inline_data": {"mime_type": "image/jpeg", "data": b64}})
@@ -488,7 +486,7 @@ def analyze_chart(images_bytes_list, cid, sembol, coklu=False):
         "contents": [{"parts": parts}],
         "generationConfig": {
             "temperature": 1.0,
-            "maxOutputTokens": 8192,
+            "maxOutputTokens": 4096,
             "thinkingConfig": {"thinkingLevel": "low"},
             "responseMimeType": "application/json",
             "responseSchema": {
@@ -532,7 +530,7 @@ def analyze_chart(images_bytes_list, cid, sembol, coklu=False):
 
     headers = {"Content-Type": "application/json", "x-goog-api-key": GEMINI_API_KEY}
 
-    pro_bekleme = [10, 30, 60]
+    pro_bekleme = [15, 30, 60, 120]
 
     for deneme, bekleme in enumerate(pro_bekleme, 1):
         try:
@@ -1068,7 +1066,7 @@ def process_analysis(cid, images_bytes_list, sembol, coklu):
 def main():
     threading.Thread(target=run_health_server, daemon=True).start()
     init_db()
-    print(f"=== SENTETİK ANALİZ BOTU v19 BAŞLADI (SADECE PRO) ===", flush=True)
+    print(f"=== SENTETİK ANALİZ BOTU v20 BAŞLADI (SADECE PRO) ===", flush=True)
     offset = get_offset()
 
     while True:
