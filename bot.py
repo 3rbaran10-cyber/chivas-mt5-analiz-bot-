@@ -14,41 +14,24 @@ GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_M
 
 GEMINI_LOCK = threading.Lock()
 SON_ISTEK_ZAMANI = [0.0]
-MIN_ISTEK_ARASI = 5.0  # Pro için istekler arası minimum 5 saniye
+MIN_ISTEK_ARASI = 5.0
 
 # ==========================================
 # DESTEKLENEN SEMBOLLER
 # ==========================================
 ALLOWED_SYMBOLS = [
-    "GainX 1200",
-    "GainX 999",
-    "MAX GainX 1000",
-    "MAX GainX 2000",
-    "MAX PainX 1000",
-    "MAX PainX 2000",
-    "PainX 1200",
-    "PainX 400",
-    "PainX 800",
-    "PainX 999",
+    "GainX 1200", "GainX 999", "MAX GainX 1000", "MAX GainX 2000",
+    "MAX PainX 1000", "MAX PainX 2000", "PainX 1200", "PainX 400",
+    "PainX 800", "PainX 999",
 ]
 ALLOWED_SYMBOLS_NORM = {
     s.lower().replace("-", " ").replace("/", " ").strip(): s for s in ALLOWED_SYMBOLS
 }
 
-# ==========================================
-# SEMBOL BAŞINA SL/TP MESAFESİ (PUAN)
-# ==========================================
 SYMBOL_MESAFE = {
-    "GainX 1200":      9,
-    "GainX 999":       22,
-    "MAX GainX 1000":  72,
-    "MAX GainX 2000":  193,
-    "MAX PainX 1000":  156,
-    "MAX PainX 2000":  225,
-    "PainX 1200":      9,
-    "PainX 400":       10,
-    "PainX 800":       7,
-    "PainX 999":       19,
+    "GainX 1200": 9, "GainX 999": 22, "MAX GainX 1000": 72, "MAX GainX 2000": 193,
+    "MAX PainX 1000": 156, "MAX PainX 2000": 225, "PainX 1200": 9, "PainX 400": 10,
+    "PainX 800": 7, "PainX 999": 19,
 }
 VARSAYILAN_MESAFE = 20
 
@@ -68,7 +51,7 @@ def run_health_server():
     HTTPServer(("0.0.0.0", port), Health).serve_forever()
 
 # ==========================================
-# ORTAK KURALLAR
+# ORTAK KURALLAR & PROMPT'LAR
 # ==========================================
 SEVIYE_KURALLARI = """
 M1 ODAKLI İŞLEM:
@@ -91,9 +74,6 @@ yol_puani dizisini YÖN ile uyumlu sırala.
 - BEKLE yönünde: yol_puani dizisi göndermek zorunlu değil.
 """
 
-# ==========================================
-# PROMPT (TEKLİ FOTO)
-# ==========================================
 PROMPT_TEMPLATE = """Sen dünyanın en iyi {sembol} analiz uzmanısın. 15+ yıllık deneyimli profesyonelsin. Smart Money konseptlerini (ICT) derinlemesine bilirsin.
 
 Sana {sembol} için BİR MT5 ekran görüntüsü gönderiliyor. Bu TEK bir fotoğraftır ama içinde YAN YANA bölünmüş 3 grafik olabilir: M30, M15, M1.
@@ -143,9 +123,6 @@ JSON ŞEMASI:
 - kalan_mum (1-3), mum_yonu, hareket_aciklamasi, sonraki_hamle, uyari
 - m1_bolge (object: x, y, w, h)"""
 
-# ==========================================
-# PROMPT (ÇOKLU FOTO - ALBÜM)
-# ==========================================
 PROMPT_TEMPLATE_MULTI = """Sen dünyanın en iyi {sembol} analiz uzmanısın. 15+ yıllık deneyimli profesyonelsin. Smart Money konseptlerini (ICT) derinlemesine bilirsin.
 
 Sana {sembol} için birden fazla zaman diliminde grafik gönderiliyor.
@@ -410,14 +387,11 @@ def caption_to_symbol(caption):
 def hesapla_sl_tp(sembol, giris_degeri, yon):
     if yon not in ("LONG", "SHORT"):
         return None
-
     mesafe = SYMBOL_MESAFE.get(sembol, VARSAYILAN_MESAFE)
-
     try:
         giris = float(str(giris_degeri).replace(",", "."))
     except (ValueError, TypeError):
         return None
-
     if yon == "SHORT":
         sl = giris + mesafe
         tp1 = giris - mesafe
@@ -426,13 +400,9 @@ def hesapla_sl_tp(sembol, giris_degeri, yon):
         sl = giris - mesafe
         tp1 = giris + mesafe
         tp2 = giris + mesafe * 1.2
-
     return {
-        "giris": round(giris, 2),
-        "stop_loss": round(sl, 2),
-        "tp1": round(tp1, 2),
-        "tp2": round(tp2, 2),
-        "mesafe": mesafe,
+        "giris": round(giris, 2), "stop_loss": round(sl, 2),
+        "tp1": round(tp1, 2), "tp2": round(tp2, 2), "mesafe": mesafe,
     }
 
 # ==========================================
@@ -452,7 +422,7 @@ def check_rate_limit(cid):
     return True
 
 # ==========================================
-# GEMINI İSTEK YÖNETİCİSİ (Global Kilit)
+# GEMINI İSTEK YÖNETİCİSİ
 # ==========================================
 def gemini_istek_at(url, payload, headers):
     global SON_ISTEK_ZAMANI
@@ -465,7 +435,7 @@ def gemini_istek_at(url, payload, headers):
         return resp
 
 # ==========================================
-# GEMINI ANALİZ (Sadece Pro)
+# GEMINI ANALİZ (Retry-After Destekli)
 # ==========================================
 def analyze_chart(images_bytes_list, cid, sembol, coklu=False):
     print(f"🔍 Analiz başladı (Sembol: {sembol}, Görsel: {len(images_bytes_list)}, Çoklu: {coklu}, Model: {GEMINI_MODEL})", flush=True)
@@ -530,7 +500,7 @@ def analyze_chart(images_bytes_list, cid, sembol, coklu=False):
 
     headers = {"Content-Type": "application/json", "x-goog-api-key": GEMINI_API_KEY}
 
-    pro_bekleme = [15, 30, 60, 120]
+    pro_bekleme = [15, 30, 60, 120, 240]
 
     for deneme, bekleme in enumerate(pro_bekleme, 1):
         try:
@@ -546,6 +516,13 @@ def analyze_chart(images_bytes_list, cid, sembol, coklu=False):
                     return None
 
             elif resp.status_code in (429, 503):
+                retry_after = resp.headers.get("Retry-After")
+                if retry_after:
+                    try:
+                        bekleme = int(retry_after)
+                        print(f"⏳ Retry-After header: {bekleme} sn", flush=True)
+                    except:
+                        pass
                 if deneme < len(pro_bekleme):
                     send_msg(cid, f"⏳ Pro model yoğun. {bekleme} sn sonra tekrar... ({deneme}/{len(pro_bekleme)})")
                     time.sleep(bekleme)
@@ -562,9 +539,6 @@ def analyze_chart(images_bytes_list, cid, sembol, coklu=False):
 
     return None
 
-# ==========================================
-# JSON PARSE YARDIMCISI
-# ==========================================
 def json_parse_et(resp, cid):
     r = resp.json()
     try:
@@ -924,33 +898,25 @@ def show_yardim(cid, message_id=None):
         send_msg(cid, text, "Markdown", _ana_menu_buton())
 
 # ==========================================
-# KOMUTLAR
+# KOMUTLAR & CALLBACK
 # ==========================================
 def handle_command(cid, text):
     text = (text or "").strip()
     cmd = text.split()[0].lower() if text else ""
 
     if cmd in ("/menu", "/start"):
-        show_menu(cid)
-        return
+        show_menu(cid); return
     if cmd == "/yardim":
-        show_yardim(cid)
-        return
+        show_yardim(cid); return
     if cmd == "/gecmis":
-        show_gecmis(cid)
-        return
+        show_gecmis(cid); return
     if cmd == "/istatistik":
-        show_istatistik(cid)
-        return
+        show_istatistik(cid); return
     if cmd == "/semboller":
-        show_semboller(cid)
-        return
+        show_semboller(cid); return
 
     send_msg(cid, "ℹ️ Fotoğraf at ve altına sembol yaz. Menü için /menu")
 
-# ==========================================
-# CALLBACK
-# ==========================================
 def handle_callback(cq):
     try:
         cid = cq["message"]["chat"]["id"]
@@ -1066,7 +1032,7 @@ def process_analysis(cid, images_bytes_list, sembol, coklu):
 def main():
     threading.Thread(target=run_health_server, daemon=True).start()
     init_db()
-    print(f"=== SENTETİK ANALİZ BOTU v21 BAŞLADI (SADECE PRO) ===", flush=True)
+    print(f"=== SENTETİK ANALİZ BOTU v22 BAŞLADI (Retry-After Destekli) ===", flush=True)
     offset = get_offset()
 
     while True:
