@@ -9,7 +9,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
-# Sadece Pro model kullanılıyor
+# Sadece Pro model, küresel uç nokta
 GEMINI_MODEL = "gemini-3.1-pro-preview"
 GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
 
@@ -488,8 +488,8 @@ def analyze_chart(images_bytes_list, cid, sembol, coklu=False):
         "contents": [{"parts": parts}],
         "generationConfig": {
             "temperature": 1.0,
-            "maxOutputTokens": 16384,
-            "thinkingConfig": {"thinkingLevel": "high"},
+            "maxOutputTokens": 8192,
+            "thinkingConfig": {"thinkingLevel": "low"},
             "responseMimeType": "application/json",
             "responseSchema": {
                 "type": "object",
@@ -1068,7 +1068,7 @@ def process_analysis(cid, images_bytes_list, sembol, coklu):
 def main():
     threading.Thread(target=run_health_server, daemon=True).start()
     init_db()
-    print(f"=== SENTETİK ANALİZ BOTU v18 BAŞLADI (SADECE PRO) ===", flush=True)
+    print(f"=== SENTETİK ANALİZ BOTU v19 BAŞLADI (SADECE PRO) ===", flush=True)
     offset = get_offset()
 
     while True:
