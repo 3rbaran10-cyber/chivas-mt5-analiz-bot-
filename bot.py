@@ -9,17 +9,14 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
-# Pro model (birincil) ve Flash model (yedek)
-GEMINI_PRO_MODEL = "gemini-3.1-pro-preview"
-GEMINI_PRO_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_PRO_MODEL}:generateContent"
-
-GEMINI_FLASH_MODEL = "gemini-3.5-flash"
-GEMINI_FLASH_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_FLASH_MODEL}:generateContent"
+# Sadece Pro model kullanılıyor
+GEMINI_MODEL = "gemini-3.1-pro-preview"
+GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
 
 # Global kilit: aynı anda sadece 1 Gemini isteği
 GEMINI_LOCK = threading.Lock()
 SON_ISTEK_ZAMANI = [0.0]
-MIN_ISTEK_ARASI = 1.0  # Pro için minimum 3sn, Flash için 1sn yeterli
+MIN_ISTEK_ARASI = 3.0  # Pro için istekler arası minimum 3 saniye
 
 # ==========================================
 # DESTEKLENEN SEMBOLLER
@@ -470,10 +467,10 @@ def gemini_istek_at(url, payload, headers):
         return resp
 
 # ==========================================
-# GEMINI ANALİZ (Pro + Flash Fallback)
+# GEMINI ANALİZ (Sadece Pro)
 # ==========================================
 def analyze_chart(images_bytes_list, cid, sembol, coklu=False):
-    print(f"🔍 Analiz başladı (Sembol: {sembol}, Görsel: {len(images_bytes_list)}, Çoklu: {coklu})", flush=True)
+    print(f"🔍 Analiz başladı (Sembol: {sembol}, Görsel: {len(images_bytes_list)}, Çoklu: {coklu}, Model: {GEMINI_MODEL})", flush=True)
 
     parts = [{"text": (PROMPT_TEMPLATE_MULTI if coklu else PROMPT_TEMPLATE).format(sembol=sembol)}]
 
@@ -487,12 +484,12 @@ def analyze_chart(images_bytes_list, cid, sembol, coklu=False):
         parts.append({"inline_data": {"mime_type": "image/jpeg", "data": b64}})
         del b64
 
-    pro_payload = {
+    payload = {
         "contents": [{"parts": parts}],
         "generationConfig": {
             "temperature": 1.0,
-            "maxOutputTokens": 8192,
-            "thinkingConfig": {"thinkingLevel": "low"},
+            "maxOutputTokens": 16384,
+            "thinkingConfig": {"thinkingLevel": "high"},
             "responseMimeType": "application/json",
             "responseSchema": {
                 "type": "object",
@@ -533,83 +530,37 @@ def analyze_chart(images_bytes_list, cid, sembol, coklu=False):
         }
     }
 
-    flash_payload = {
-        "contents": [{"parts": parts}],
-        "generationConfig": {
-            "temperature": 0.7,
-            "maxOutputTokens": 4096,
-            "thinkingConfig": {"thinkingBudget": 1024},
-            "responseMimeType": "application/json",
-            "responseSchema": pro_payload["generationConfig"]["responseSchema"]
-        }
-    }
+    headers = {"Content-Type": "application/json", "x-goog-api-key": GEMINI_API_KEY}
 
-    pro_headers = {"Content-Type": "application/json", "x-goog-api-key": GEMINI_API_KEY}
-    flash_headers = {"Content-Type": "application/json", "x-goog-api-key": GEMINI_API_KEY}
-
-    # Pro'yu dene, 429 alırsan Flash'a geç
     pro_bekleme = [10, 30, 60]
-    flash_bekleme = [3, 5, 10]
 
-    # AŞAMA 1: Pro model
-    pro_basarili = False
     for deneme, bekleme in enumerate(pro_bekleme, 1):
         try:
-            resp = gemini_istek_at(GEMINI_PRO_URL, pro_payload, pro_headers)
-            print(f"🔍 Pro HTTP = {resp.status_code} (Deneme {deneme}/{len(pro_bekleme)})", flush=True)
+            resp = gemini_istek_at(GEMINI_URL, payload, headers)
+            print(f"🔍 Gemini HTTP = {resp.status_code} (Deneme {deneme}/{len(pro_bekleme)})", flush=True)
 
             if resp.status_code == 200:
-                pro_basarili = True
                 a = json_parse_et(resp, cid)
                 if a:
                     print(f"✅ Pro model başarılı", flush=True)
                     return a
                 else:
-                    break
+                    return None
+
             elif resp.status_code in (429, 503):
                 if deneme < len(pro_bekleme):
                     send_msg(cid, f"⏳ Pro model yoğun. {bekleme} sn sonra tekrar... ({deneme}/{len(pro_bekleme)})")
                     time.sleep(bekleme)
                     continue
                 else:
-                    print(f"⚠️ Pro model yanıt vermedi, Flash'a geçiliyor...", flush=True)
-                    send_msg(cid, "⚠️ Pro model yoğun. Flash modeline geçiliyor...")
-                    break
+                    send_msg(cid, "❌ Pro model şu an yanıt vermiyor. Lütfen biraz sonra tekrar deneyin.")
+                    return None
             else:
                 send_msg(cid, f"❌ Gemini Hatası ({resp.status_code}): {resp.text[:400]}")
                 return None
         except Exception as e:
             send_msg(cid, f"❌ Analiz Hatası: {str(e)[:200]}")
             return None
-
-    # AŞAMA 2: Flash model (yedek)
-    if not pro_basarili:
-        for deneme, bekleme in enumerate(flash_bekleme, 1):
-            try:
-                resp = gemini_istek_at(GEMINI_FLASH_URL, flash_payload, flash_headers)
-                print(f"🔍 Flash HTTP = {resp.status_code} (Deneme {deneme}/{len(flash_bekleme)})", flush=True)
-
-                if resp.status_code == 200:
-                    a = json_parse_et(resp, cid)
-                    if a:
-                        print(f"✅ Flash model başarılı", flush=True)
-                        return a
-                    else:
-                        break
-                elif resp.status_code in (429, 503):
-                    if deneme < len(flash_bekleme):
-                        send_msg(cid, f"⏳ Flash model yoğun. {bekleme} sn sonra tekrar... ({deneme}/{len(flash_bekleme)})")
-                        time.sleep(bekleme)
-                        continue
-                    else:
-                        send_msg(cid, "❌ Her iki model de yanıt vermiyor. Lütfen biraz sonra tekrar deneyin.")
-                        return None
-                else:
-                    send_msg(cid, f"❌ Gemini Hatası ({resp.status_code}): {resp.text[:400]}")
-                    return None
-            except Exception as e:
-                send_msg(cid, f"❌ Analiz Hatası: {str(e)[:200]}")
-                return None
 
     return None
 
@@ -1117,7 +1068,7 @@ def process_analysis(cid, images_bytes_list, sembol, coklu):
 def main():
     threading.Thread(target=run_health_server, daemon=True).start()
     init_db()
-    print(f"=== SENTETİK ANALİZ BOTU v17 BAŞLADI (PRO + FLASH FALLBACK) ===", flush=True)
+    print(f"=== SENTETİK ANALİZ BOTU v18 BAŞLADI (SADECE PRO) ===", flush=True)
     offset = get_offset()
 
     while True:
