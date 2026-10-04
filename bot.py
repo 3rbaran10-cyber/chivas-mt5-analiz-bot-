@@ -28,12 +28,28 @@ ALLOWED_SYMBOLS_NORM = {
     s.lower().replace("-", " ").replace("/", " ").strip(): s for s in ALLOWED_SYMBOLS
 }
 
-SYMBOL_MESAFE = {
-    "GainX 1200": 9, "GainX 999": 22, "MAX GainX 1000": 72, "MAX GainX 2000": 193,
-    "MAX PainX 1000": 156, "MAX PainX 2000": 225, "PainX 1200": 9, "PainX 400": 10,
-    "PainX 800": 7, "PainX 999": 19,
+# ==========================================
+# M1 SEMBOL ATR DEĞERLERİ (Gemini'ye referans)
+# ==========================================
+SYMBOL_ATR = {
+    "GainX 1200": 9,
+    "GainX 999": 22,
+    "MAX GainX 1000": 72,
+    "MAX GainX 2000": 193,
+    "MAX PainX 1000": 156,
+    "MAX PainX 2000": 225,
+    "PainX 1200": 9,
+    "PainX 400": 10,
+    "PainX 800": 7,
+    "PainX 999": 19,
 }
-VARSAYILAN_MESAFE = 20
+VARSAYILAN_ATR = 20
+
+# ==========================================
+# KIRPMA SINIRLARI (ATR çarpanı)
+# ==========================================
+MIN_ATR_CARPAN = 1.0   # Alt sınır: ATR x 1
+MAX_ATR_CARPAN = 3.0   # Üst sınır: ATR x 3
 
 # ==========================================
 # HEALTH SERVER
@@ -59,13 +75,15 @@ Bu görselde M30, M15, M1 birlikte olabilir. Ama GİRİŞ SADECE M1 yapısına g
 M30 ve M15 SADECE TREND ONAYI için kullanılır (yön doğrulaması).
 
 GİRİŞ NOKTASI:
-Kullanıcı KISA mesafeli işlem istiyor (1-2 dakikalık).
 Giriş noktasını M1'deki güncel fiyata YAKIN ver.
 Anlık fiyattan en fazla 5-10 puan uzakta olsun.
 
-SL/TP HESABI:
-Sen SL/TP mesafesi VERME. Bu mesafeler sistem tarafından sembol başına sabit olarak atanmıştır.
-Sen sadece şunları ver: yön, giriş fiyatı, analiz.
+SL/TP FİYATLARI (ÖNEMLİ):
+Sana bu sembolün M1 ATR değeri bildirilecek.
+- SL mesafesi: Bu ATR değerinin 1x - 3x arası olmalı
+- TP1 mesafesi: SL mesafesiyle aynı veya biraz fazla (R/R 1:1 veya 1:1.5)
+- TP2 mesafesi: TP1'in %20 üstü
+- Bu sınırların dışına ÇIKMA.
 
 YOL PUANI SIRALAMASI:
 yol_puani dizisini YÖN ile uyumlu sırala.
@@ -78,13 +96,19 @@ PROMPT_TEMPLATE = """Sen dünyanın en iyi {sembol} analiz uzmanısın. 15+ yıl
 
 Sana {sembol} için BİR MT5 ekran görüntüsü gönderiliyor. Bu TEK bir fotoğraftır ama içinde YAN YANA bölünmüş 3 grafik olabilir: M30, M15, M1.
 
+ÖNEMLİ BİLGİ:
+{sembol} sembolünün M1 ATR değeri = {atr} puan.
+SL mesafesi bu ATR'nin 1x - 3x arası olmalı (yani {min_sl} - {max_sl} puan arası).
+TP1 mesafesi SL ile uyumlu olmalı.
+TP2 mesafesi TP1'in %20 üstü.
+
 GÖREV:
 1. Görselde kaç zaman dilimi olduğunu tespit et (sol üstteki M30, M15, M1 etiketlerini oku).
 2. Tüm TF'leri birlikte değerlendir:
    - M30 → ana trend yönü
    - M15 → orta vade yapı ve onay
    - M1  → GİRİŞ için TEK referans
-3. Sonraki 2 dakikalık fiyat projeksiyonunu tahmin et (2 dakika = 2 M1 mumu).
+3. M1'deki yapıya göre GİRİŞ, SL, TP1, TP2 fiyatlarını ver.
 
 """ + SEVIYE_KURALLARI + """
 KULLANILACAK TEKNİKLER:
@@ -100,7 +124,7 @@ KARAR KURALLARI:
 2. Güven oranını değişken ver (%50, %65, %75, %85, %95).
 3. M30 ve M15 çelişiyorsa → güven düşür veya 'BEKLE' ver.
 
-MUM SAYISI: M1 grafiğinde 2 dakika = 2 mum. 1-3 arası ver. 5+ verme.
+MUM SAYISI: M1 grafiğinde 1-3 mum arası ver.
 
 M1 BÖLGE TESPİTİ:
 Görselde M1 grafiğinin konumunu YÜZDE olarak bul.
@@ -115,6 +139,8 @@ FORMAT: SADECE geçerli JSON. Sayılarda NOKTA kullan. Türkçe yaz.
 JSON ŞEMASI:
 - sembol, yon ("LONG"|"SHORT"|"BEKLE"), guven (0-100)
 - giris (string, M1'deki güncel fiyata yakın)
+- stop_loss (string, fiyat)
+- take_profit (array, [tp1_fiyat, tp2_fiyat])
 - trend_m1, vwap_durumu, fvg_tespit, likidite_durumu
 - destekler (array), direncler (array), formasyonlar (array)
 - kullanilan_teknikler (array)
@@ -127,10 +153,16 @@ PROMPT_TEMPLATE_MULTI = """Sen dünyanın en iyi {sembol} analiz uzmanısın. 15
 
 Sana {sembol} için birden fazla zaman diliminde grafik gönderiliyor.
 
+ÖNEMLİ BİLGİ:
+{sembol} sembolünün M1 ATR değeri = {atr} puan.
+SL mesafesi bu ATR'nin 1x - 3x arası olmalı (yani {min_sl} - {max_sl} puan arası).
+TP1 mesafesi SL ile uyumlu olmalı.
+TP2 mesafesi TP1'in %20 üstü.
+
 GÖREV:
 1. Hangi grafiğin hangi TF olduğunu sol üst köşedeki etiketlerden (M30, M15, M1) OKU.
 2. En büyük TF'den en küçüğe sırala (M30 → M15 → M1).
-3. Üçünü birleştirerek sonraki 2 dakikalık fiyat projeksiyonunu ver.
+3. M1'deki yapıya göre GİRİŞ, SL, TP1, TP2 fiyatlarını ver.
 
 ÇOKLU TF KURALLARI:
 - M30 ve M15 aynı yön → güven yüksek (%75-90)
@@ -150,7 +182,7 @@ KARAR KURALLARI:
 1. Güven %65 altı → 'BEKLE'.
 2. Güven değişken ver.
 
-MUM SAYISI: M1'de 2 dakika = 2 mum. 1-3 arası ver.
+MUM SAYISI: M1'de 1-3 mum arası ver.
 
 M1 BÖLGE TESPİTİ:
 M1 grafiğinin konumunu YÜZDE olarak bul.
@@ -162,6 +194,8 @@ FORMAT: SADECE geçerli JSON. Sayılarda NOKTA kullan. Türkçe yaz.
 JSON ŞEMASI:
 - sembol, yon ("LONG"|"SHORT"|"BEKLE"), guven (0-100)
 - giris (string, M1'deki güncel fiyata yakın)
+- stop_loss (string, fiyat)
+- take_profit (array, [tp1_fiyat, tp2_fiyat])
 - trend_m1, vwap_durumu, fvg_tespit, likidite_durumu
 - destekler (array), direncler (array), formasyonlar (array)
 - kullanilan_teknikler (array)
@@ -382,27 +416,50 @@ def caption_to_symbol(caption):
     return None
 
 # ==========================================
-# SL/TP HESAPLAMA
+# HİBRİT SL/TP KIRPMA FONKSİYONU
 # ==========================================
-def hesapla_sl_tp(sembol, giris_degeri, yon):
-    if yon not in ("LONG", "SHORT"):
-        return None
-    mesafe = SYMBOL_MESAFE.get(sembol, VARSAYILAN_MESAFE)
+def kirp_sl_tp(sembol, giris, gemini_sl, gemini_tp1, gemini_tp2):
+    """
+    Gemini'nin verdiği SL/TP fiyatlarını ATR sınırlarına göre kırpar.
+    - Min: ATR x 1
+    - Max: ATR x 3
+    """
     try:
-        giris = float(str(giris_degeri).replace(",", "."))
+        giris_f = float(str(giris).replace(",", "."))
+        sl_f = float(str(gemini_sl).replace(",", "."))
+        tp1_f = float(str(gemini_tp1).replace(",", "."))
+        tp2_f = float(str(gemini_tp2).replace(",", "."))
     except (ValueError, TypeError):
         return None
-    if yon == "SHORT":
-        sl = giris + mesafe
-        tp1 = giris - mesafe
-        tp2 = giris - mesafe * 1.2
-    else:
-        sl = giris - mesafe
-        tp1 = giris + mesafe
-        tp2 = giris + mesafe * 1.2
+
+    atr = SYMBOL_ATR.get(sembol, VARSAYILAN_ATR)
+    min_mesafe = atr * MIN_ATR_CARPAN
+    max_mesafe = atr * MAX_ATR_CARPAN
+
+    # Gemini'nin verdiği mesafeler
+    gemini_sl_mesafe = abs(giris_f - sl_f)
+    gemini_tp1_mesafe = abs(giris_f - tp1_f)
+    gemini_tp2_mesafe = abs(giris_f - tp2_f)
+
+    # Kırp
+    sl_kirp = max(min_mesafe, min(gemini_sl_mesafe, max_mesafe))
+    tp1_kirp = max(min_mesafe, min(gemini_tp1_mesafe, max_mesafe))
+    tp2_kirp = max(min_mesafe, min(gemini_tp2_mesafe, max_mesafe * 1.5))  # TP2 biraz daha serbest
+
     return {
-        "giris": round(giris, 2), "stop_loss": round(sl, 2),
-        "tp1": round(tp1, 2), "tp2": round(tp2, 2), "mesafe": mesafe,
+        "giris": round(giris_f, 2),
+        "atr": atr,
+        "min_mesafe": round(min_mesafe, 2),
+        "max_mesafe": round(max_mesafe, 2),
+        "sl_mesafe": round(sl_kirp, 2),
+        "tp1_mesafe": round(tp1_kirp, 2),
+        "tp2_mesafe": round(tp2_kirp, 2),
+        "gemini_sl_mesafe": round(gemini_sl_mesafe, 2),
+        "gemini_tp1_mesafe": round(gemini_tp1_mesafe, 2),
+        "gemini_tp2_mesafe": round(gemini_tp2_mesafe, 2),
+        "sl_kirpildi": abs(sl_kirp - gemini_sl_mesafe) > 1,
+        "tp1_kirpildi": abs(tp1_kirp - gemini_tp1_mesafe) > 1,
+        "tp2_kirpildi": abs(tp2_kirp - gemini_tp2_mesafe) > 1,
     }
 
 # ==========================================
@@ -435,12 +492,19 @@ def gemini_istek_at(url, payload, headers):
         return resp
 
 # ==========================================
-# GEMINI ANALİZ (MAKSİMUM KALİTE)
+# GEMINI ANALİZ (ATR REFERANSLI)
 # ==========================================
 def analyze_chart(images_bytes_list, cid, sembol, coklu=False):
     print(f"🔍 Analiz başladı (Sembol: {sembol}, Görsel: {len(images_bytes_list)}, Çoklu: {coklu})", flush=True)
 
-    parts = [{"text": (PROMPT_TEMPLATE_MULTI if coklu else PROMPT_TEMPLATE).format(sembol=sembol)}]
+    atr = SYMBOL_ATR.get(sembol, VARSAYILAN_ATR)
+    min_sl = int(atr * MIN_ATR_CARPAN)
+    max_sl = int(atr * MAX_ATR_CARPAN)
+
+    template = PROMPT_TEMPLATE_MULTI if coklu else PROMPT_TEMPLATE
+    prompt_text = template.format(sembol=sembol, atr=atr, min_sl=min_sl, max_sl=max_sl)
+
+    parts = [{"text": prompt_text}]
 
     for img_bytes in images_bytes_list:
         img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
@@ -466,6 +530,8 @@ def analyze_chart(images_bytes_list, cid, sembol, coklu=False):
                     "yon": {"type": "string", "enum": ["LONG", "SHORT", "BEKLE"]},
                     "guven": {"type": "integer"},
                     "giris": {"type": "string"},
+                    "stop_loss": {"type": "string"},
+                    "take_profit": {"type": "array", "items": {"type": "string"}},
                     "trend_m1": {"type": "string"},
                     "vwap_durumu": {"type": "string"},
                     "fvg_tespit": {"type": "string"},
@@ -492,8 +558,9 @@ def analyze_chart(images_bytes_list, cid, sembol, coklu=False):
                         }
                     }
                 },
-                "required": ["sembol", "yon", "guven", "giris", "kisa_analiz", "gerekce",
-                             "yol_puani", "kalan_mum", "mum_yonu", "hareket_aciklamasi", "m1_bolge"]
+                "required": ["sembol", "yon", "guven", "giris", "stop_loss", "take_profit",
+                             "kisa_analiz", "gerekce", "yol_puani", "kalan_mum",
+                             "mum_yonu", "hareket_aciklamasi", "m1_bolge"]
             }
         }
     }
@@ -582,6 +649,10 @@ def json_parse_et(resp, cid):
 
     if "giris" in a:
         a["giris"] = temizle_sayi(a["giris"])
+    if "stop_loss" in a:
+        a["stop_loss"] = temizle_sayi(a["stop_loss"])
+    if "take_profit" in a and isinstance(a["take_profit"], list):
+        a["take_profit"] = [temizle_sayi(x) for x in a["take_profit"]]
 
     try:
         g = int(a.get("guven", 0))
@@ -589,6 +660,17 @@ def json_parse_et(resp, cid):
         g = 0
     if g < 65:
         a["yon"] = "BEKLE"
+
+    # kalan_mum 1-3 arası olmalı
+    try:
+        km = int(a.get("kalan_mum", 1))
+        if km < 1:
+            km = 1
+        if km > 3:
+            km = 3
+        a["kalan_mum"] = km
+    except:
+        a["kalan_mum"] = 1
 
     print(f"🎯 M1 bölge: {a.get('m1_bolge')} | Yön: {a.get('yon')} | Giriş: {a.get('giris')}", flush=True)
     return a
@@ -858,8 +940,8 @@ def show_istatistik(cid, message_id=None):
 def show_semboller(cid, message_id=None):
     lines = ["📋 *DESTEKLENEN SEMBOLLER*", ""]
     for s in ALLOWED_SYMBOLS:
-        m = SYMBOL_MESAFE.get(s, VARSAYILAN_MESAFE)
-        lines.append(f"• {s} — SL/TP: {m} puan")
+        a = SYMBOL_ATR.get(s, VARSAYILAN_ATR)
+        lines.append(f"• {s} — ATR: {a} puan")
     text = "\n".join(lines)
     if message_id:
         edit_message_text(cid, message_id, text, "Markdown", _ana_menu_buton())
@@ -972,7 +1054,7 @@ def get_ready_albums():
     return ready
 
 # ==========================================
-# ANALİZ AKIŞI
+# ANALİZ AKIŞI (GEMINI SL/TP + ATR KIRPMA)
 # ==========================================
 def process_analysis(cid, images_bytes_list, sembol, coklu):
     send_msg(cid, f"⏳ {sembol} analiz ediliyor... ({'M30+M15+M1' if coklu else 'Tek Grafik'})")
@@ -983,17 +1065,50 @@ def process_analysis(cid, images_bytes_list, sembol, coklu):
         return
 
     if a.get("yon") in ("LONG", "SHORT"):
-        hesap = hesapla_sl_tp(sembol, a.get("giris"), a.get("yon"))
-        if hesap:
-            a["giris"] = str(hesap["giris"])
-            a["stop_loss"] = str(hesap["stop_loss"])
-            a["take_profit"] = [str(hesap["tp1"]), str(hesap["tp2"])]
-            a["risk_odul"] = "1:1"
-            print(f"🧮 Bot hesabı: SL={hesap['stop_loss']} | TP1={hesap['tp1']} | TP2={hesap['tp2']} | Mesafe={hesap['mesafe']}", flush=True)
+        gemini_sl = a.get("stop_loss")
+        gemini_tps = a.get("take_profit") or []
+        gemini_tp1 = gemini_tps[0] if len(gemini_tps) > 0 else None
+        gemini_tp2 = gemini_tps[1] if len(gemini_tps) > 1 else None
+
+        if gemini_sl and gemini_tp1 and a.get("giris"):
+            # TP2 yoksa TP1 x 1.2 al
+            if not gemini_tp2:
+                try:
+                    g_f = float(str(a["giris"]).replace(",", "."))
+                    tp1_f = float(str(gemini_tp1).replace(",", "."))
+                    if a["yon"] == "SHORT":
+                        gemini_tp2 = str(tp1_f - abs(g_f - tp1_f) * 0.2)
+                    else:
+                        gemini_tp2 = str(tp1_f + abs(g_f - tp1_f) * 0.2)
+                except:
+                    gemini_tp2 = gemini_tp1
+
+            hesap = kirp_sl_tp(sembol, a.get("giris"), gemini_sl, gemini_tp1, gemini_tp2)
+            if hesap:
+                giris_f = hesap["giris"]
+                if a["yon"] == "SHORT":
+                    sl = giris_f + hesap["sl_mesafe"]
+                    tp1 = giris_f - hesap["tp1_mesafe"]
+                    tp2 = giris_f - hesap["tp2_mesafe"]
+                else:
+                    sl = giris_f - hesap["sl_mesafe"]
+                    tp1 = giris_f + hesap["tp1_mesafe"]
+                    tp2 = giris_f + hesap["tp2_mesafe"]
+
+                a["giris"] = str(round(giris_f, 2))
+                a["stop_loss"] = str(round(sl, 2))
+                a["take_profit"] = [str(round(tp1, 2)), str(round(tp2, 2))]
+
+                rr = hesap["tp1_mesafe"] / hesap["sl_mesafe"] if hesap["sl_mesafe"] > 0 else 0
+                a["risk_odul"] = f"1:{round(rr, 2)}"
+
+                print(f"🧮 ATR={hesap['atr']} | Sınır={hesap['min_mesafe']}-{hesap['max_mesafe']} | Gemini SL={hesap['gemini_sl_mesafe']} TP1={hesap['gemini_tp1_mesafe']} | Kırpılmış SL={hesap['sl_mesafe']} TP1={hesap['tp1_mesafe']} | SL_kirp={hesap['sl_kirpildi']} TP1_kirp={hesap['tp1_kirpildi']}", flush=True)
+            else:
+                a["yon"] = "BEKLE"
+                a["uyari"] = "SL/TP hesaplanamadı."
         else:
-            print(f"⚠️ SL/TP hesabı başarısız. Giriş: {a.get('giris')}, Yön: {a.get('yon')}", flush=True)
             a["yon"] = "BEKLE"
-            a["uyari"] = "Giriş fiyatı okunamadı."
+            a["uyari"] = "SL/TP verisi eksik."
 
     aid = save_analysis(cid, sembol, a)
     kart = build_card(a, sembol, coklu=coklu)
@@ -1027,7 +1142,7 @@ def process_analysis(cid, images_bytes_list, sembol, coklu):
 def main():
     threading.Thread(target=run_health_server, daemon=True).start()
     init_db()
-    print(f"=== SENTETİK ANALİZ BOTU v28 BAŞLADI (MAKSİMUM KALİTE) ===", flush=True)
+    print(f"=== SENTETİK ANALİZ BOTU v29 BAŞLADI (ATR x 1-3 KIRPMA) ===", flush=True)
     offset = get_offset()
 
     while True:
