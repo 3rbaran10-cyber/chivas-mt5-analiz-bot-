@@ -19,9 +19,9 @@ MIN_ISTEK_ARASI = 3.0
 # ==========================================
 # ABONELİK AYARLARI
 # ==========================================
-ADMIN_ID = 5504006147           # Senin Telegram ID'n
-ABONELIK_YILDIZ = 4166          # Haftalık 100$ ≈ 4166 Telegram Stars
-ABONELIK_GUN = 7                # Haftalık abonelik
+ADMIN_ID = 5504006147
+ABONELIK_YILDIZ = 4166
+ABONELIK_GUN = 7
 
 # ==========================================
 # DESTEKLENEN SEMBOLLER
@@ -251,7 +251,6 @@ def save_user(cid, isim=""):
         print(f"save_user hatası: {e}", flush=True)
 
 def is_subscribed(cid):
-    """Admin her zaman abone sayılır."""
     if is_admin(cid):
         return True
     user = get_user(cid)
@@ -261,7 +260,6 @@ def is_subscribed(cid):
     return bitis > int(time.time())
 
 def kalan_sure_metni(cid):
-    """Kullanıcının kalan abonelik süresini okunabilir metin olarak döndürür."""
     if is_admin(cid):
         return "Admin (süresiz)"
     user = get_user(cid)
@@ -278,14 +276,12 @@ def kalan_sure_metni(cid):
     return f"{saat} saat"
 
 def activate_subscription(cid, gun=ABONELIK_GUN, yildiz=0):
-    """Aboneliği başlatır veya uzatır."""
     try:
         conn = sqlite3.connect(DB_PATH)
         cur = conn.execute("SELECT abonelik_bitis FROM users WHERE cid=?", (cid,))
         row = cur.fetchone()
         simdi = int(time.time())
         if row and row[0] and row[0] > simdi:
-            # Mevcut aboneliğin üzerine ekle
             yeni_bitis = row[0] + (gun * 86400)
         else:
             yeni_bitis = simdi + (gun * 86400)
@@ -629,10 +625,8 @@ def analyze_chart(images_bytes_list, cid, sembol, coklu=False):
             if resp.status_code == 200:
                 a = json_parse_et(resp, cid)
                 if a:
-                    print(f"✅ Analiz başarılı", flush=True)
                     return a
-                else:
-                    return None
+                return None
 
             elif resp.status_code in (429, 503):
                 if deneme < max_deneme - 1:
@@ -661,7 +655,6 @@ def json_parse_et(resp, cid):
             fr = r["candidates"][0].get("finishReason", "?")
         except:
             fr = "?"
-        print(f"❌ Boş cevap. finishReason={fr}", flush=True)
         send_msg(cid, f"❌ Gemini boş cevap döndü. (Sebep: {fr})")
         return None
 
@@ -684,7 +677,6 @@ def json_parse_et(resp, cid):
             try:
                 a = json.loads(text[bas:son+1])
             except Exception as e2:
-                print(f"Kurtarma başarısız: {e2}", flush=True)
                 send_msg(cid, "❌ Gemini cevabı bozuk JSON.")
                 return None
         else:
@@ -713,7 +705,6 @@ def json_parse_et(resp, cid):
     except:
         a["kalan_mum"] = 1
 
-    print(f"🎯 Yön: {a.get('yon')} | Giriş: {a.get('giris')}", flush=True)
     return a
 
 # ==========================================
@@ -889,40 +880,50 @@ def build_card(a, sembol="XAU/USD", coklu=False):
     return "\n".join(t)
 
 # ==========================================
-# ABONELİK MESAJLARI
+# ABONELİK MESAJI (Soru 2: B - 10 sembol + link)
 # ==========================================
 def abonelik_mesaji(cid):
     text = (
         "🔒 *ABONELİK GEREKLİ*\n\n"
-        f"📅 *Haftalık Abonelik:* {ABONELIK_GUN} gün\n"
-        f"💰 *Ücret:* 100$ (≈ {ABONELIK_YILDIZ} Telegram Stars)\n\n"
-        "✅ Abone olduğunuzda:\n"
-        "• 7 gün boyunca sınırsız analiz\n"
-        "• M1 + M15 + M30 çoklu analiz\n"
-        "• Smart Money konseptleri (FVG, BOS, OTE)\n"
-        "• Gerçek zamanlı projeksiyon okları\n\n"
-        "👇 Ödeme yapmak için aşağıdaki butona basın:"
+        f"📅 Haftalık: {ABONELIK_GUN} gün\n"
+        f"💰 Ücret: 100$ (≈ {ABONELIK_YILDIZ} ⭐)\n\n"
+        "━━━━━━━━━━━━━━━━━━━\n"
+        "📖 *NASIL KULLANILIR?*\n"
+        "━━━━━━━━━━━━━━━━━━━\n\n"
+        "1️⃣ Abone ol (aşağıdaki butona bas)\n\n"
+        "2️⃣ MT5'te 1 grafik aç:\n"
+        "   • Tek foto: M1 (hızlı analiz)\n"
+        "   • 3 foto albüm: M30 + M15 + M1 (detaylı)\n\n"
+        "3️⃣ Ekran görüntüsü al\n\n"
+        "4️⃣ Bota gönder\n\n"
+        "5️⃣ Fotoğrafın ALTINA (caption) sembolü yaz:\n"
+        "   Örnek: `PainX 999`\n"
+        "   Örnek: `GainX 1200`\n\n"
+        "📋 *10 sembol destekleniyor.*\n"
+        "Detaylı liste: /semboller\n\n"
+        "⚠️ Sembol yazmazsan analiz yapılmaz!\n\n"
+        "👇 Abone olmak için:"
     )
     markup = {
         "inline_keyboard": [
             [{"text": f"💳 Abone Ol ({ABONELIK_YILDIZ} ⭐)", "callback_data": "abone_ol"}],
-            [{"text": "❓ Yardım", "callback_data": "menu:yardim"}]
+            [{"text": "📋 Semboller", "callback_data": "menu:semboller"},
+             {"text": "❓ Yardım", "callback_data": "menu:yardim"}]
         ]
     }
     return text, markup
 
 def send_abonelik_invoice(cid):
-    """Telegram Stars ile ödeme faturası gönderir."""
     try:
         payload = {
             "chat_id": cid,
             "title": f"Haftalık Abonelik ({ABONELIK_GUN} Gün)",
             "description": f"{ABONELIK_GUN} gün boyunca botu sınırsız kullanma hakkı",
             "payload": f"sub_{ABONELIK_GUN}d_{int(time.time())}",
-            "provider_token": "",  # Stars için boş
+            "provider_token": "",
             "currency": "XTR",
             "prices": [
-                {"label": f"Haftalık Abonelik", "amount": ABONELIK_YILDIZ}
+                {"label": "Haftalık Abonelik", "amount": ABONELIK_YILDIZ}
             ]
         }
         r = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendInvoice",
@@ -1049,7 +1050,7 @@ def show_istatistik(cid, message_id=None):
         send_msg(cid, text, "Markdown", _ana_menu_buton())
 
 def show_semboller(cid, message_id=None):
-    lines = ["📋 *DESTEKLENEN SEMBOLLER*", ""]
+    lines = ["📋 *DESTEKLENEN 10 SEMBOL*", ""]
     for s in ALLOWED_SYMBOLS:
         a = SYMBOL_ATR.get(s, VARSAYILAN_ATR)
         lines.append(f"• {s} — ATR: {a} puan")
@@ -1060,25 +1061,38 @@ def show_semboller(cid, message_id=None):
         send_msg(cid, text, "Markdown", _ana_menu_buton())
 
 def show_yardim(cid, message_id=None):
+    # Soru 3: A - 10 sembolü tam listele
+    sembol_listesi = "\n".join([f"• `{s}`" for s in ALLOWED_SYMBOLS])
     text = (
         "❓ *YARDIM*\n\n"
-        "📸 *Analiz nasıl yapılır?*\n"
+        "📸 *NASIL ANALİZ YAPILIR?*\n\n"
         "1. MT5'te grafiği aç\n"
-        "2. Screenshot al\n"
+        "2. Ekran görüntüsü al\n"
         "3. Bota gönder\n"
-        "4. Caption'a sembolü yaz (örn: `PainX 999`)\n\n"
-        "📸 *Albüm (Çoklu TF):*\n"
-        "• 3 fotoğrafı tek seferde seç\n"
+        "4. ALTINA sembolü yaz\n\n"
+        "━━━━━━━━━━━━━━━━━━━\n"
+        "📋 *DESTEKLENEN 10 SEMBOL*\n"
+        "━━━━━━━━━━━━━━━━━━━\n\n"
+        + sembol_listesi + "\n\n"
+        "⚠️ Bu liste dışındaki semboller\n"
+        "desteklenmez.\n\n"
+        "━━━━━━━━━━━━━━━━━━━\n"
+        "📸 *TEK vs ALBÜM*\n"
+        "━━━━━━━━━━━━━━━━━━━\n\n"
+        "Tek foto:\n"
+        "• Sadece M1 grafiği yeterli\n\n"
+        "Albüm (3 foto):\n"
         "• Sıra: M30 → M15 → M1\n"
-        "• Caption birine ekle\n\n"
-        f"💳 *Abonelik:* {ABONELIK_GUN} gün / 100$ (≈ {ABONELIK_YILDIZ} ⭐)\n\n"
-        "📊 *Komutlar:*\n"
-        "/menu — Menü\n"
-        "/gecmis — Geçmiş\n"
+        "• 3 fotoğrafı TEK SEFERDE seç\n"
+        "• Caption'ı birine ekle\n\n"
+        "━━━━━━━━━━━━━━━━━━━\n"
+        "⚙️ *KOMUTLAR*\n"
+        "━━━━━━━━━━━━━━━━━━━\n\n"
+        "/menu — Ana menü\n"
+        "/gecmis — Son 10 analiz\n"
         "/istatistik — Başarı oranı\n"
         "/semboller — Sembol listesi\n"
-        "/abonelik — Abonelik durumu\n\n"
-        "⚠️ Yatırım tavsiyesi değildir."
+        "/abonelik — Abonelik durumu"
     )
     if message_id:
         edit_message_text(cid, message_id, text, "Markdown", _ana_menu_buton())
@@ -1092,7 +1106,6 @@ def handle_command(cid, text):
     text = (text or "").strip()
     cmd = text.split()[0].lower() if text else ""
 
-    # Admin için özel komutlar
     if is_admin(cid):
         if cmd == "/admin":
             try:
@@ -1111,7 +1124,6 @@ def handle_command(cid, text):
             return
 
     if cmd in ("/menu", "/start"):
-        # Admin değilse ve abone değilse abonelik mesajı göster
         if not is_admin(cid) and not is_subscribed(cid):
             text_, markup = abonelik_mesaji(cid)
             send_msg(cid, text_, "Markdown", markup)
@@ -1129,7 +1141,6 @@ def handle_command(cid, text):
     if cmd == "/abonelik":
         show_abonelik(cid); return
 
-    # Abone olmayanlar için genel uyarı
     if not is_admin(cid) and not is_subscribed(cid):
         text_, markup = abonelik_mesaji(cid)
         send_msg(cid, text_, "Markdown", markup)
@@ -1189,7 +1200,6 @@ def handle_callback(cq):
 # ÖDEME HANDLER'LARI
 # ==========================================
 def handle_pre_checkout(q):
-    """Ödeme öncesi onay."""
     try:
         requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/answerPreCheckoutQuery",
                       json={"pre_checkout_query_id": q["id"], "ok": True}, timeout=10)
@@ -1197,7 +1207,6 @@ def handle_pre_checkout(q):
         print(f"pre_checkout hatası: {e}", flush=True)
 
 def handle_successful_payment(msg):
-    """Ödeme başarılı olduğunda aboneliği başlatır."""
     try:
         cid = msg["chat"]["id"]
         payment = msg.get("successful_payment", {})
@@ -1216,10 +1225,21 @@ def handle_successful_payment(msg):
                 f"📅 Abonelik: *{ABONELIK_GUN} gün*\n"
                 f"⏰ Bitiş: *{bitis_str}*\n"
                 f"💰 Ödenen: *{yildiz} ⭐*\n\n"
-                f"📸 Artık grafik atıp analiz alabilirsin!",
+                "━━━━━━━━━━━━━━━━━━━\n"
+                "📖 *NASIL KULLANILIR?*\n"
+                "━━━━━━━━━━━━━━━━━━━\n\n"
+                "1️⃣ MT5'te grafiği aç\n\n"
+                "2️⃣ Ekran görüntüsü al\n\n"
+                "3️⃣ Bota gönder\n\n"
+                "4️⃣ Fotoğrafın ALTINA (caption) sembolü yaz:\n"
+                "   Örnek: `PainX 999`\n"
+                "   Örnek: `GainX 1200`\n\n"
+                "⚠️ Sembol yazmazsan analiz yapılmaz!\n\n"
+                "📋 Sembol listesi: /semboller\n"
+                "❓ Detaylı yardım: /yardim\n\n"
+                "Hadi başlayalım! 🚀",
                 parse_mode="Markdown"
             )
-            # Admin'e bildirim
             if cid != ADMIN_ID:
                 send_msg(
                     ADMIN_ID,
@@ -1265,7 +1285,6 @@ def get_ready_albums():
 # ANALİZ AKIŞI
 # ==========================================
 def process_analysis(cid, images_bytes_list, sembol, coklu):
-    # Erişim kontrolü
     if not is_admin(cid) and not is_subscribed(cid):
         text_, markup = abonelik_mesaji(cid)
         send_msg(cid, text_, "Markdown", markup)
@@ -1314,8 +1333,6 @@ def process_analysis(cid, images_bytes_list, sembol, coklu):
 
                 rr = hesap["tp1_mesafe"] / hesap["sl_mesafe"] if hesap["sl_mesafe"] > 0 else 0
                 a["risk_odul"] = f"1:{round(rr, 2)}"
-
-                print(f"🧮 ATR={hesap['atr']} | Sınır={hesap['min_mesafe']}-{hesap['max_mesafe']} | SL={hesap['sl_mesafe']} TP1={hesap['tp1_mesafe']}", flush=True)
             else:
                 a["yon"] = "BEKLE"
                 a["uyari"] = "SL/TP hesaplanamadı."
@@ -1355,8 +1372,8 @@ def process_analysis(cid, images_bytes_list, sembol, coklu):
 def main():
     threading.Thread(target=run_health_server, daemon=True).start()
     init_db()
-    print(f"=== SENTETİK ANALİZ BOTU v30 BAŞLADI (FLASH-LITE + ABONELİK) ===", flush=True)
-    print(f"=== Admin ID: {ADMIN_ID} | Haftalık: {ABONELIK_GUN} gün / {ABONELIK_YILDIZ} ⭐ ===", flush=True)
+    print(f"=== SENTETİK ANALİZ BOTU v32 BAŞLADI ===", flush=True)
+    print(f"=== Admin: {ADMIN_ID} | Haftalık: {ABONELIK_GUN} gün / {ABONELIK_YILDIZ} ⭐ ===", flush=True)
     offset = get_offset()
 
     while True:
@@ -1368,12 +1385,10 @@ def main():
                 offset = u["update_id"] + 1
                 save_offset(offset)
 
-                # Callback query
                 if "callback_query" in u:
                     handle_callback(u["callback_query"])
                     continue
 
-                # Pre-checkout query (ödeme öncesi)
                 if "pre_checkout_query" in u:
                     handle_pre_checkout(u["pre_checkout_query"])
                     continue
@@ -1383,18 +1398,15 @@ def main():
                 if not cid:
                     continue
 
-                # Başarılı ödeme
                 if "successful_payment" in msg:
                     handle_successful_payment(msg)
                     continue
 
-                # Kullanıcıyı kaydet
                 isim = msg.get("from", {}).get("first_name", "")
                 if isim:
                     save_user(cid, isim)
 
                 if "photo" in msg:
-                    # Erişim kontrolü
                     if not is_admin(cid) and not is_subscribed(cid):
                         text_, markup = abonelik_mesaji(cid)
                         send_msg(cid, text_, "Markdown", markup)
@@ -1407,10 +1419,31 @@ def main():
                         if not check_rate_limit(cid):
                             continue
                         caption = (msg.get("caption") or "").strip()
-                        sembol = caption_to_symbol(caption)
-                        if not sembol:
-                            send_msg(cid, f"⚠️ Lütfen fotoğrafın altına sembolü tam yazın.\nÖrnek: `{ALLOWED_SYMBOLS[0]}`", parse_mode="Markdown")
+
+                        # Soru 4: C - Sembolsüz fotoğraf
+                        if not caption:
+                            send_msg(
+                                cid,
+                                "⚠️ *Sembol yazmadınız!*\n\n"
+                                "Lütfen fotoğrafın altına (caption) sembolü yazın.\n\n"
+                                "📋 Sembol listesi: /semboller\n\n"
+                                "Örnek: `PainX 999`",
+                                parse_mode="Markdown"
+                            )
                             continue
+
+                        sembol = caption_to_symbol(caption)
+
+                        # Soru 1: A - Basit uyarı
+                        if not sembol:
+                            send_msg(
+                                cid,
+                                "⚠️ *Bu sembol desteklenmiyor.*\n\n"
+                                "📋 Desteklenen sembol listesi: /semboller",
+                                parse_mode="Markdown"
+                            )
+                            continue
+
                         try:
                             img_bytes = get_file_bytes(msg["photo"][-1]["file_id"])
                             process_analysis(cid, [img_bytes], sembol, coklu=False)
@@ -1424,7 +1457,6 @@ def main():
                     continue
 
                 if not text and "photo" not in msg:
-                    # Abone değilse abonelik mesajı
                     if not is_admin(cid) and not is_subscribed(cid):
                         text_, markup = abonelik_mesaji(cid)
                         send_msg(cid, text_, "Markdown", markup)
@@ -1442,15 +1474,24 @@ def main():
                     if not check_rate_limit(cid):
                         continue
 
+                    # Sembolü bul
                     sembol = None
                     for p in photos:
                         cap = (p.get("caption") or "").strip()
-                        sembol = caption_to_symbol(cap)
-                        if sembol:
+                        s = caption_to_symbol(cap)
+                        if s:
+                            sembol = s
                             break
 
+                    # Soru 4: C - Sembolsüz albüm
                     if not sembol:
-                        send_msg(cid, "⚠️ Albümdeki bir fotoğrafın altına sembolü yazın.\nÖrnek: `GainX 1200`", parse_mode="Markdown")
+                        send_msg(
+                            cid,
+                            "⚠️ *Sembol yazmadınız!*\n\n"
+                            "Albümdeki bir fotoğrafın altına sembolü ekleyin.\n\n"
+                            "📋 Sembol listesi: /semboller",
+                            parse_mode="Markdown"
+                        )
                         continue
 
                     images = []
