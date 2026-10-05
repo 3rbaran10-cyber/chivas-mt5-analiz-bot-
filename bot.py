@@ -880,7 +880,7 @@ def build_card(a, sembol="XAU/USD", coklu=False):
     return "\n".join(t)
 
 # ==========================================
-# ABONELİK MESAJI (Soru 2: B - 10 sembol + link)
+# ABONELİK MESAJI
 # ==========================================
 def abonelik_mesaji(cid):
     text = (
@@ -908,7 +908,8 @@ def abonelik_mesaji(cid):
         "inline_keyboard": [
             [{"text": f"💳 Abone Ol ({ABONELIK_YILDIZ} ⭐)", "callback_data": "abone_ol"}],
             [{"text": "📋 Semboller", "callback_data": "menu:semboller"},
-             {"text": "❓ Yardım", "callback_data": "menu:yardim"}]
+             {"text": "❓ Yardım", "callback_data": "menu:yardim"}],
+            [{"text": "🤝 Ortak Ol", "callback_data": "menu:ortaklik"}]
         ]
     }
     return text, markup
@@ -955,7 +956,8 @@ def _menu_keyboard():
                 {"text": "❓ Yardım", "callback_data": "menu:yardim"}
             ],
             [
-                {"text": "💳 Abonelik Durumu", "callback_data": "menu:abonelik"}
+                {"text": "💳 Abonelik Durumu", "callback_data": "menu:abonelik"},
+                {"text": "🤝 Ortaklık", "callback_data": "menu:ortaklik"}
             ]
         ]
     }
@@ -990,6 +992,39 @@ def show_abonelik(cid, message_id=None):
     markup = {
         "inline_keyboard": [
             [{"text": f"🔄 Yenile ({ABONELIK_YILDIZ} ⭐)", "callback_data": "abone_ol"}],
+            [{"text": "🔙 Ana Menü", "callback_data": "menu:ana"}]
+        ]
+    }
+    if message_id:
+        edit_message_text(cid, message_id, text, "Markdown", markup)
+    else:
+        send_msg(cid, text, "Markdown", markup)
+
+def show_ortaklik(cid, message_id=None):
+    """Ortaklık programı bilgilendirme ve Telegram affiliate yönlendirmesi."""
+    text = (
+        "🤝 *ORTAKLIK PROGRAMI*\n\n"
+        "Botumuzu tanıt, para kazan! 💰\n\n"
+        "━━━━━━━━━━━━━━━━━━━\n"
+        "📋 *NASIL ÇALIŞIR?*\n"
+        "━━━━━━━━━━━━━━━━━━━\n\n"
+        "1️⃣ Aşağıdaki butona bas\n"
+        "2️⃣ Telegram sana özel davet linki verir\n"
+        "3️⃣ Linki kitlenle paylaş\n"
+        "4️⃣ Gelen her müşteriden kazan!\n\n"
+        "━━━━━━━━━━━━━━━━━━━\n"
+        "💰 *KAZANÇ*\n"
+        "━━━━━━━━━━━━━━━━━━━\n\n"
+        "• Komisyon: *%30*\n"
+        "• Süre: *2 yıl*\n"
+        "• Her müşteri: ~*1250 ⭐*\n\n"
+        "━━━━━━━━━━━━━━━━━━━\n\n"
+        "👇 Ortaklık programına katılmak için:"
+    )
+    markup = {
+        "inline_keyboard": [
+            [{"text": "🤝 Ortaklık Programına Katıl",
+              "url": "https://t.me/CHIVAS_MT5_bot?start=affiliate"}],
             [{"text": "🔙 Ana Menü", "callback_data": "menu:ana"}]
         ]
     }
@@ -1061,7 +1096,6 @@ def show_semboller(cid, message_id=None):
         send_msg(cid, text, "Markdown", _ana_menu_buton())
 
 def show_yardim(cid, message_id=None):
-    # Soru 3: A - 10 sembolü tam listele
     sembol_listesi = "\n".join([f"• `{s}`" for s in ALLOWED_SYMBOLS])
     text = (
         "❓ *YARDIM*\n\n"
@@ -1092,7 +1126,8 @@ def show_yardim(cid, message_id=None):
         "/gecmis — Son 10 analiz\n"
         "/istatistik — Başarı oranı\n"
         "/semboller — Sembol listesi\n"
-        "/abonelik — Abonelik durumu"
+        "/abonelik — Abonelik durumu\n"
+        "/ortaklik — Ortaklık programı"
     )
     if message_id:
         edit_message_text(cid, message_id, text, "Markdown", _ana_menu_buton())
@@ -1140,6 +1175,8 @@ def handle_command(cid, text):
         show_semboller(cid); return
     if cmd == "/abonelik":
         show_abonelik(cid); return
+    if cmd == "/ortaklik":
+        show_ortaklik(cid); return
 
     if not is_admin(cid) and not is_subscribed(cid):
         text_, markup = abonelik_mesaji(cid)
@@ -1177,6 +1214,8 @@ def handle_callback(cq):
             show_yardim(cid, message_id); return
         if data == "menu:abonelik":
             show_abonelik(cid, message_id); return
+        if data == "menu:ortaklik":
+            show_ortaklik(cid, message_id); return
 
         if data == "abone_ol":
             basarili = send_abonelik_invoice(cid)
@@ -1372,7 +1411,7 @@ def process_analysis(cid, images_bytes_list, sembol, coklu):
 def main():
     threading.Thread(target=run_health_server, daemon=True).start()
     init_db()
-    print(f"=== SENTETİK ANALİZ BOTU v32 BAŞLADI ===", flush=True)
+    print(f"=== SENTETİK ANALİZ BOTU v33 BAŞLADI ===", flush=True)
     print(f"=== Admin: {ADMIN_ID} | Haftalık: {ABONELIK_GUN} gün / {ABONELIK_YILDIZ} ⭐ ===", flush=True)
     offset = get_offset()
 
@@ -1420,7 +1459,6 @@ def main():
                             continue
                         caption = (msg.get("caption") or "").strip()
 
-                        # Soru 4: C - Sembolsüz fotoğraf
                         if not caption:
                             send_msg(
                                 cid,
@@ -1434,7 +1472,6 @@ def main():
 
                         sembol = caption_to_symbol(caption)
 
-                        # Soru 1: A - Basit uyarı
                         if not sembol:
                             send_msg(
                                 cid,
@@ -1474,7 +1511,6 @@ def main():
                     if not check_rate_limit(cid):
                         continue
 
-                    # Sembolü bul
                     sembol = None
                     for p in photos:
                         cap = (p.get("caption") or "").strip()
@@ -1483,7 +1519,6 @@ def main():
                             sembol = s
                             break
 
-                    # Soru 4: C - Sembolsüz albüm
                     if not sembol:
                         send_msg(
                             cid,
