@@ -22,6 +22,7 @@ MIN_ISTEK_ARASI = 3.0
 ADMIN_ID = 5504006147
 ABONELIK_YILDIZ = 4166
 ABONELIK_GUN = 7
+FREE_ANALIZ_HAKKI = 1  # Her kullanıcıya 1 ücretsiz analiz
 
 # ==========================================
 # DESTEKLENEN SEMBOLLER
@@ -197,9 +198,15 @@ def init_db():
                 isim TEXT,
                 abonelik_baslangic INTEGER,
                 abonelik_bitis INTEGER,
-                toplam_odeme INTEGER DEFAULT 0
+                toplam_odeme INTEGER DEFAULT 0,
+                free_used INTEGER DEFAULT 0
             )
         """)
+        # Migration: free_used kolonu yoksa ekle
+        try:
+            conn.execute("ALTER TABLE users ADD COLUMN free_used INTEGER DEFAULT 0")
+        except:
+            pass
         conn.commit()
         conn.close()
         print("✅ DB hazır", flush=True)
@@ -234,7 +241,7 @@ def is_admin(cid):
 def get_user(cid):
     try:
         conn = sqlite3.connect(DB_PATH)
-        cur = conn.execute("SELECT cid, isim, abonelik_baslangic, abonelik_bitis, toplam_odeme FROM users WHERE cid=?", (cid,))
+        cur = conn.execute("SELECT cid, isim, abonelik_baslangic, abonelik_bitis, toplam_odeme, free_used FROM users WHERE cid=?", (cid,))
         row = cur.fetchone()
         conn.close()
         return row
@@ -258,6 +265,26 @@ def is_subscribed(cid):
         return False
     bitis = user[3] or 0
     return bitis > int(time.time())
+
+def free_hakki_var(cid):
+    """Kullanıcının ücretsiz analiz hakkı var mı?"""
+    if is_admin(cid):
+        return False  # Admin her zaman abone sayılır
+    user = get_user(cid)
+    if not user:
+        return True  # Yeni kullanıcı, hakkı var
+    free_used = user[5] if len(user) > 5 else 0
+    return (free_used or 0) < FREE_ANALIZ_HAKKI
+
+def free_hakki_kullan(cid):
+    """Ücretsiz analiz hakkını kullanıldı olarak işaretle."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.execute("UPDATE users SET free_used = COALESCE(free_used, 0) + 1 WHERE cid=?", (cid,))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"free_hakki_kullan hatası: {e}", flush=True)
 
 def kalan_sure_metni(cid):
     if is_admin(cid):
@@ -496,17 +523,9 @@ def kirp_sl_tp(sembol, giris, gemini_sl, gemini_tp1, gemini_tp2):
     return {
         "giris": round(giris_f, 2),
         "atr": atr,
-        "min_mesafe": round(min_mesafe, 2),
-        "max_mesafe": round(max_mesafe, 2),
         "sl_mesafe": round(sl_kirp, 2),
         "tp1_mesafe": round(tp1_kirp, 2),
         "tp2_mesafe": round(tp2_kirp, 2),
-        "gemini_sl_mesafe": round(gemini_sl_mesafe, 2),
-        "gemini_tp1_mesafe": round(gemini_tp1_mesafe, 2),
-        "gemini_tp2_mesafe": round(gemini_tp2_mesafe, 2),
-        "sl_kirpildi": abs(sl_kirp - gemini_sl_mesafe) > 1,
-        "tp1_kirpildi": abs(tp1_kirp - gemini_tp1_mesafe) > 1,
-        "tp2_kirpildi": abs(tp2_kirp - gemini_tp2_mesafe) > 1,
     }
 
 # ==========================================
@@ -883,6 +902,15 @@ def build_card(a, sembol="XAU/USD", coklu=False):
 # ABONELİK MESAJI
 # ==========================================
 def abonelik_mesaji(cid):
+    user = get_user(cid)
+    free_used = user[5] if (user and len(user) > 5) else 0
+    free_kaldi = max(0, FREE_ANALIZ_HAKKI - (free_used or 0))
+
+    if free_kaldi > 0:
+        uyari = f"🎁 *{free_kaldi} ÜCRETSİZ ANALİZ HAKKIN VAR!*\n\nFotoğraf at, hemen dene 👇"
+    else:
+        uyari = "🔒 Abonelik gerekli. Devam etmek için aşağıdaki butona bas."
+
     text = (
         "🔒 *ABONELİK GEREKLİ*\n\n"
         f"📅 Haftalık: {ABONELIK_GUN} gün\n"
@@ -890,19 +918,17 @@ def abonelik_mesaji(cid):
         "━━━━━━━━━━━━━━━━━━━\n"
         "📖 *NASIL KULLANILIR?*\n"
         "━━━━━━━━━━━━━━━━━━━\n\n"
-        "1️⃣ Abone ol (aşağıdaki butona bas)\n\n"
-        "2️⃣ MT5'te 1 grafik aç:\n"
+        "1️⃣ MT5'te 1 grafik aç:\n"
         "   • Tek foto: M1 (hızlı analiz)\n"
         "   • 3 foto albüm: M30 + M15 + M1 (detaylı)\n\n"
-        "3️⃣ Ekran görüntüsü al\n\n"
-        "4️⃣ Bota gönder\n\n"
-        "5️⃣ Fotoğrafın ALTINA (caption) sembolü yaz:\n"
+        "2️⃣ Ekran görüntüsü al\n\n"
+        "3️⃣ Bota gönder\n\n"
+        "4️⃣ Fotoğrafın ALTINA (caption) sembolü yaz:\n"
         "   Örnek: `PainX 999`\n"
         "   Örnek: `GainX 1200`\n\n"
         "📋 *10 sembol destekleniyor.*\n"
         "Detaylı liste: /semboller\n\n"
-        "⚠️ Sembol yazmazsan analiz yapılmaz!\n\n"
-        "👇 Abone olmak için:"
+        f"{uyari}"
     )
     markup = {
         "inline_keyboard": [
@@ -1001,7 +1027,6 @@ def show_abonelik(cid, message_id=None):
         send_msg(cid, text, "Markdown", markup)
 
 def show_ortaklik(cid, message_id=None):
-    """Ortaklık programı bilgilendirme ve Telegram affiliate yönlendirmesi."""
     text = (
         "🤝 *ORTAKLIK PROGRAMI*\n\n"
         "Botumuzu tanıt, para kazan! 💰\n\n"
@@ -1149,20 +1174,19 @@ def handle_command(cid, text):
                 aktif = cur.fetchone()[0]
                 cur = conn.execute("SELECT COUNT(*), COALESCE(SUM(toplam_odeme),0) FROM users")
                 toplam, yildiz = cur.fetchone()
+                cur = conn.execute("SELECT COUNT(*) FROM users WHERE COALESCE(free_used,0) > 0")
+                free_kullanan = cur.fetchone()[0]
                 conn.close()
                 send_msg(cid, f"👑 *ADMIN PANEL*\n\n"
                               f"👥 Toplam kullanıcı: {toplam}\n"
                               f"✅ Aktif abone: {aktif}\n"
+                              f"🎁 Ücretsiz deneyen: {free_kullanan}\n"
                               f"💰 Toplam yıldız: {yildiz}")
             except Exception as e:
                 send_msg(cid, f"Hata: {e}")
             return
 
     if cmd in ("/menu", "/start"):
-        if not is_admin(cid) and not is_subscribed(cid):
-            text_, markup = abonelik_mesaji(cid)
-            send_msg(cid, text_, "Markdown", markup)
-            return
         show_menu(cid)
         return
     if cmd == "/yardim":
@@ -1178,7 +1202,7 @@ def handle_command(cid, text):
     if cmd == "/ortaklik":
         show_ortaklik(cid); return
 
-    if not is_admin(cid) and not is_subscribed(cid):
+    if not is_admin(cid) and not is_subscribed(cid) and not free_hakki_var(cid):
         text_, markup = abonelik_mesaji(cid)
         send_msg(cid, text_, "Markdown", markup)
         return
@@ -1199,10 +1223,6 @@ def handle_callback(cq):
                       json={"callback_query_id": cb_id}, timeout=10)
 
         if data == "menu:ana":
-            if not is_admin(cid) and not is_subscribed(cid):
-                text_, markup = abonelik_mesaji(cid)
-                edit_message_text(cid, message_id, text_, "Markdown", markup)
-                return
             show_menu(cid, message_id); return
         if data == "menu:gecmis":
             show_gecmis(cid, message_id); return
@@ -1324,10 +1344,14 @@ def get_ready_albums():
 # ANALİZ AKIŞI
 # ==========================================
 def process_analysis(cid, images_bytes_list, sembol, coklu):
-    if not is_admin(cid) and not is_subscribed(cid):
+    # Erişim kontrolü
+    if not is_admin(cid) and not is_subscribed(cid) and not free_hakki_var(cid):
         text_, markup = abonelik_mesaji(cid)
         send_msg(cid, text_, "Markdown", markup)
         return
+
+    # Ücretsiz kullanıcı mı?
+    using_free = (not is_admin(cid)) and (not is_subscribed(cid)) and free_hakki_var(cid)
 
     send_msg(cid, f"⏳ {sembol} analiz ediliyor... ({'M30+M15+M1' if coklu else 'Tek Grafik'})")
 
@@ -1379,8 +1403,19 @@ def process_analysis(cid, images_bytes_list, sembol, coklu):
             a["yon"] = "BEKLE"
             a["uyari"] = "SL/TP verisi eksik."
 
+    # Ücretsiz hakkı kullan
+    if using_free:
+        free_hakki_kullan(cid)
+
     aid = save_analysis(cid, sembol, a)
     kart = build_card(a, sembol, coklu=coklu)
+
+    # Ücretsiz kullanıcıysa karta uyarı ekle
+    if using_free:
+        kart += "\n\n━━━━━━━━━━━━━━━━━━━\n"
+        kart += "🎁 *Bu senin 1 ÜCRETSİZ analizin!*\n\n"
+        kart += "Devam etmek için abone ol:\n"
+        kart += f"💳 /abonelik — Haftalık 100$ ({ABONELIK_YILDIZ} ⭐)"
 
     reply_markup = None
     if a.get("yon") in ("LONG", "SHORT") and aid:
@@ -1411,7 +1446,7 @@ def process_analysis(cid, images_bytes_list, sembol, coklu):
 def main():
     threading.Thread(target=run_health_server, daemon=True).start()
     init_db()
-    print(f"=== SENTETİK ANALİZ BOTU v33 BAŞLADI ===", flush=True)
+    print(f"=== SENTETİK ANALİZ BOTU v34 BAŞLADI (1 ÜCRETSİZ ANALİZ) ===", flush=True)
     print(f"=== Admin: {ADMIN_ID} | Haftalık: {ABONELIK_GUN} gün / {ABONELIK_YILDIZ} ⭐ ===", flush=True)
     offset = get_offset()
 
@@ -1446,7 +1481,8 @@ def main():
                     save_user(cid, isim)
 
                 if "photo" in msg:
-                    if not is_admin(cid) and not is_subscribed(cid):
+                    # Erişim kontrolü
+                    if not is_admin(cid) and not is_subscribed(cid) and not free_hakki_var(cid):
                         text_, markup = abonelik_mesaji(cid)
                         send_msg(cid, text_, "Markdown", markup)
                         continue
@@ -1494,7 +1530,7 @@ def main():
                     continue
 
                 if not text and "photo" not in msg:
-                    if not is_admin(cid) and not is_subscribed(cid):
+                    if not is_admin(cid) and not is_subscribed(cid) and not free_hakki_var(cid):
                         text_, markup = abonelik_mesaji(cid)
                         send_msg(cid, text_, "Markdown", markup)
                     else:
@@ -1505,7 +1541,7 @@ def main():
                     photos = data["photos"]
                     cid = data["cid"]
 
-                    if not is_admin(cid) and not is_subscribed(cid):
+                    if not is_admin(cid) and not is_subscribed(cid) and not free_hakki_var(cid):
                         continue
 
                     if not check_rate_limit(cid):
