@@ -17,7 +17,7 @@ SON_ISTEK_ZAMANI = [0.0]
 MIN_ISTEK_ARASI = 3.0
 
 # ==========================================
-# ÖZEL KULLANIM: Sadece bu ID kullanabilir
+# ÖZEL KULLANIM
 # ==========================================
 ADMIN_ID = 5504006147
 
@@ -33,9 +33,6 @@ ALLOWED_SYMBOLS_NORM = {
     s.lower().replace("-", " ").replace("/", " ").strip(): s for s in ALLOWED_SYMBOLS
 }
 
-# ==========================================
-# M1 SEMBOL ATR DEĞERLERİ
-# ==========================================
 SYMBOL_ATR = {
     "GainX 1200": 9,
     "GainX 999": 22,
@@ -66,143 +63,143 @@ class Health(BaseHTTPRequestHandler):
 
 def run_health_server():
     port = int(os.environ.get("PORT", 10000))
-    HTTPServer(("0.0.0.0", port), Health).serve_fore.
-ver-()
+    HTTPServer(("0.0.0.0", port), Health).serve_forever()
 
 # ==========================================
-# OR LONGTAK KURALLAR & PROMP yT'LAR
-# =========================================ön=
+# ORTAK KURALLAR
+# ==========================================
 SEVIYE_KURALLARI = """
-M1 ODAKLI İŞLEM:
-Bu görüselde M30, M15, M1 birlikte olabilir. Ama GİRİŞ SADECE M1 yapısına göre verilir.
-M30 ve M15 SADECE TREND ONAYI için kullanılır (yön doğrulaması).
+M1 ODAKLI ISLEM:
+Bu gorselde M30, M15, M1 birlikte olabilir. Ama GIRIS SADECE M1 yapisina gore verilir.
+M30 ve M15 SADECE TREND ONAYI icin kullanilir (yon dogrulamasi).
 
-GİRİŞ NOKTASI:
-Giriş noktasını M1'deki güncel fiyata YAKIN ver.
-Anlık fiyattan en fazla 5-10 puan uzakta olsun.
+GIRIS NOKTASI:
+Giris noktasini M1'deki guncel fiyata YAKIN ver.
+Anlik fiyattan en fazla 5-10 puan uzakta olsun.
 
-SL/TP FİYATLARI (ÖNEMLİ):
-Sana bu sembolün M1 ATR değeri bildirilecek.
-- SL mesafesi: Bu ATR değerinin 1x - 3x arası olmalı
-- TP1 mesafesi: SL mesafesiyle aynı veya biraz fazla (R/R 1:1 veya 1:1.5)
-- TP2 mesafesi: TP1'in %20 üstü
-- Bu sınırların dışına ÇIKMA.
+SL/TP FIYATLARI (ONEMLI):
+Sana bu sembolun M1 ATR degeri bildirilecek.
+- SL mesafesi: Bu ATR degerinin 1x - 3x arasi olmali
+- TP1 mesafesi: SL mesafesiyle ayni veya biraz fazla (R/R 1:1 veya 1:1.5)
+- TP2 mesafesi: TP1'in %20 ustu
+- Bu sinirlarin disina CIKMA.
 
 YOL PUANI SIRALAMASI:
-yol_puani dizisini YÖN ile uyumlu sırala.
-- SHORT yönünde: ilk puan EN YÜKSEK (örn: 90), son puan EN DÜŞÜK (örn: 10) olmalınde: ilk puan EN DÜŞÜK (örn: 10), son puan EN YÜKSEK (örn: 90) olmalı.
-- BEKLE yönünde: yol_puani dizisi göndermek zorunlu değil.
+yol_puani dizisini YON ile uyumlu sirala.
+- SHORT yonunde: ilk puan EN YUKSEK (orn: 90), son puan EN DUSUK (orn: 10) olmali.
+- LONG yonunde: ilk puan EN DUSUK (orn: 10), son puan EN YUKSEK (orn: 90) olmali.
+- BEKLE yonunde: yol_puani dizisi gondermek zorunlu degil.
 """
 
-PROMPT_TEMPLATE = """Sen dünyanın en iyi {sembol} analiz uzmanısın. 15+ yıllık deneyimli profesyonelsin. Smart Money konseptlerini (ICT) derinlemesine bilirsin.
+PROMPT_TEMPLATE = """Sen dunyanin en iyi {sembol} analiz uzmanisin. 15+ yillik deneyimli profesyonelsin. Smart Money konseptlerini (ICT) derinlemesine bilirsin.
 
-Sana {sembol} için BİR MT5 ekran görüntüsü gönderiliyor. Bu TEK bir fotoğraftır ama içinde YAN YANA bölünmüş 3 grafik olabilir: M30, M15, M1.
+Sana {sembol} icin BIR MT5 ekran goruntusu gonderiliyor. Bu TEK bir fotograftir ama icinde YAN YANA bolunmus 3 grafik olabilir: M30, M15, M1.
 
-ÖNEMLİ BİLGİ:
-{sembol} sembolünün M1 ATR değeri = {atr} puan.
-SL mesafesi bu ATR'nin 1x - 3x arası olmalı (yani {min_sl} - {max_sl} puan arası).
-TP1 mesafesi SL ile uyumlu olmalı.
-TP2 mesafesi TP1'in %20 üstü.
+ONEMLI BILGI:
+{sembol} sembolunun M1 ATR degeri = {atr} puan.
+SL mesafesi bu ATR'nin 1x - 3x arasi olmali (yani {min_sl} - {max_sl} puan arasi).
+TP1 mesafesi SL ile uyumlu olmali.
+TP2 mesafesi TP1'in %20 ustu.
 
-GÖREV:
-1. Görselde kaç zaman dilimi olduğunu tespit et (sol üstteki M30, M15, M1 etiketlerini oku).
-2. Tüm TF'leri birlikte değerlendir:
-   - M30 → ana trend yönü
-   - M15 → orta vade yapı ve onay
-   - M1  → GİRİŞ için TEK referans
-3. M1'deki yapıya göre GİRİŞ, SL, TP1, TP2 fiyatlarını ver.
+GOREV:
+1. Gorselde kac zaman dilimi oldugunu tespit et (sol ustteki M30, M15, M1 etiketlerini oku).
+2. Tum TF'leri birlikte degerlendir:
+   - M30 -> ana trend yonu
+   - M15 -> orta vade yapi ve onay
+   - M1  -> GIRIS icin TEK referans
+3. M1'deki yapiya gore GIRIS, SL, TP1, TP2 fiyatlarini ver.
 
 """ + SEVIYE_KURALLARI + """
-KULLANILACAK TEKNİKLER:
-- Market yapısı: HH/LL, BOS, CHoCH
-- Destek/direnç, Order Block, Supply/Demand
+KULLANILACAK TEKNIKLER:
+- Market yapisi: HH/LL, BOS, CHoCH
+- Destek/direnc, Order Block, Supply/Demand
 - VWAP, FVG, Liquidity Sweep
 - EMA 20/50/200, RSI, MACD, Hacim
-- Mum formasyonları (engulfing, pin bar, doji, hammer)
+- Mum formasyonlari (engulfing, pin bar, doji, hammer)
 - Fibonacci retracement
 
 KARAR KURALLARI:
-1. Güven %65 altındaysa 'yon' = 'BEKLE'.
-2. Güven oranını değişken ver (%50, %65, %75, %85, %95).
-3. M30 ve M15 çelişiyorsa → güven düşür veya 'BEKLE' ver.
+1. Guven %65 altindaysa 'yon' = 'BEKLE'.
+2. Guven oranini degisken ver (%50, %65, %75, %85, %95).
+3. M30 ve M15 celisiyorsa -> guven dusur veya 'BEKLE' ver.
 
-MUM SAYISI: M1 grafiğinde 1-3 mum arası ver.
+MUM SAYISI: M1 grafiginde 1-3 mum arasi ver.
 
-M1 BÖLGE TESPİTİ:
-Görselde M1 grafiğinin konumunu YÜZDE olarak bul.
-- x: sol kenardan uzaklık (0-100)
-- y: üst kenardan uzaklık (0-100)
-- w: genişlik (0-100)
-- h: yükseklik (0-100)
+M1 BOLGE TESPITI:
+Gorselde M1 grafiginin konumunu YUZDE olarak bul.
+- x: sol kenardan uzaklik (0-100)
+- y: ust kenardan uzaklik (0-100)
+- w: genislik (0-100)
+- h: yukseklik (0-100)
 Sadece M1 varsa: x=0, y=0, w=100, h=100 ver.
 
-FORMAT: SADECE geçerli JSON. Sayılarda NOKTA kullan. Türkçe yaz.
+FORMAT: SADECE gecerli JSON. Sayilarda NOKTA kullan. Turkce yaz.
 
-JSON ŞEMASI:
+JSON SEMASI:
 - sembol, yon ("LONG"|"SHORT"|"BEKLE"), guven (0-100)
-- giris (string, M1'deki güncel fiyata yakın)
+- giris (string, M1'deki guncel fiyata yakin)
 - stop_loss (string, fiyat)
 - take_profit (array, [tp1_fiyat, tp2_fiyat])
 - trend_m1, vwap_durumu, fvg_tespit, likidite_durumu
 - destekler (array), direncler (array), formasyonlar (array)
 - kullanilan_teknikler (array)
-- kisa_analiz, gerekce (\\n ile maddeler)
-- yol_puani (array, 7 sayı 0-100, YÖN İLE UYUMLU SIRALI)
+- kisa_analiz, gerekce
+- yol_puani (array, 7 sayi 0-100, YON ILE UYUMLU SIRALI)
 - kalan_mum (1-3), mum_yonu, hareket_aciklamasi, sonraki_hamle, uyari
 - m1_bolge (object: x, y, w, h)"""
 
-PROMPT_TEMPLATE_MULTI = """Sen dünyanın en iyi {sembol} analiz uzmanısın. 15+ yıllık deneyimli profesyonelsin. Smart Money konseptlerini (ICT) derinlemesine bilirsin.
+PROMPT_TEMPLATE_MULTI = """Sen dunyanin en iyi {sembol} analiz uzmanisin. 15+ yillik deneyimli profesyonelsin. Smart Money konseptlerini (ICT) derinlemesine bilirsin.
 
-Sana {sembol} için birden fazla zaman diliminde grafik gönderiliyor.
+Sana {sembol} icin birden fazla zaman diliminde grafik gonderiliyor.
 
-ÖNEMLİ BİLGİ:
-{sembol} sembolünün M1 ATR değeri = {atr} puan.
-SL mesafesi bu ATR'nin 1x - 3x arası olmalı (yani {min_sl} - {max_sl} puan arası).
-TP1 mesafesi SL ile uyumlu olmalı.
-TP2 mesafesi TP1'in %20 üstü.
+ONEMLI BILGI:
+{sembol} sembolunun M1 ATR degeri = {atr} puan.
+SL mesafesi bu ATR'nin 1x - 3x arasi olmali (yani {min_sl} - {max_sl} puan arasi).
+TP1 mesafesi SL ile uyumlu olmali.
+TP2 mesafesi TP1'in %20 ustu.
 
-GÖREV:
-1. Hangi grafiğin hangi TF olduğunu sol üst köşedeki etiketlerden (M30, M15, M1) OKU.
-2. En büyük TF'den en küçüğe sırala (M30 → M15 → M1).
-3. M1'deki yapıya göre GİRİŞ, SL, TP1, TP2 fiyatlarını ver.
+GOREV:
+1. Hangi grafigin hangi TF oldugunu sol ust kosedeki etiketlerden (M30, M15, M1) OKU.
+2. En buyuk TF'den en kucuge sirala (M30 -> M15 -> M1).
+3. M1'deki yapiya gore GIRIS, SL, TP1, TP2 fiyatlarini ver.
 
-ÇOKLU TF KURALLARI:
-- M30 ve M15 aynı yön → güven yüksek (%75-90)
-- M30 ve M15 çelişiyor → 'BEKLE'
-- Üçü uyumluysa → en güçlü sinyal
+COKLU TF KURALLARI:
+- M30 ve M15 ayni yon -> guven yuksek (%75-90)
+- M30 ve M15 celisiyor -> 'BEKLE'
+- Ucu uyumluysa -> en guclu sinyal
 
 """ + SEVIYE_KURALLARI + """
-KULLANILACAK TEKNİKLER:
-- Market yapısı: HH/LL, BOS, CHoCH (her TF'de ayrı)
-- Destek/direnç, Order Block, Supply/Demand
+KULLANILACAK TEKNIKLER:
+- Market yapisi: HH/LL, BOS, CHoCH (her TF'de ayri)
+- Destek/direnc, Order Block, Supply/Demand
 - VWAP, FVG, Liquidity Sweep
 - EMA 20/50/200, RSI, MACD, Hacim
-- Mum formasyonları
+- Mum formasyonlari
 - Fibonacci retracement
 
 KARAR KURALLARI:
-1. Güven %65 altı → 'BEKLE'.
-2. Güven değişken ver.
+1. Guven %65 alti -> 'BEKLE'.
+2. Guven degisken ver.
 
-MUM SAYISI: M1'de 1-3 mum arası ver.
+MUM SAYISI: M1'de 1-3 mum arasi ver.
 
-M1 BÖLGE TESPİTİ:
-M1 grafiğinin konumunu YÜZDE olarak bul.
-- x, y, w, h (0-100 arası tam sayı)
+M1 BOLGE TESPITI:
+M1 grafiginin konumunu YUZDE olarak bul.
+- x, y, w, h (0-100 arasi tam sayi)
 - Tek grafik varsa: x=0, y=0, w=100, h=100 ver.
 
-FORMAT: SADECE geçerli JSON. Sayılarda NOKTA kullan. Türkçe yaz.
+FORMAT: SADECE gecerli JSON. Sayilarda NOKTA kullan. Turkce yaz.
 
-JSON ŞEMASI:
+JSON SEMASI:
 - sembol, yon ("LONG"|"SHORT"|"BEKLE"), guven (0-100)
-- giris (string, M1'deki güncel fiyata yakın)
+- giris (string, M1'deki guncel fiyata yakin)
 - stop_loss (string, fiyat)
 - take_profit (array, [tp1_fiyat, tp2_fiyat])
 - trend_m1, vwap_durumu, fvg_tespit, likidite_durumu
 - destekler (array), direncler (array), formasyonlar (array)
 - kullanilan_teknikler (array)
-- kisa_analiz, gerekce (\\n ile maddeler)
-- yol_puani (array, 7 sayı 0-100, YÖN İLE UYUMLU SIRALI)
+- kisa_analiz, gerekce
+- yol_puani (array, 7 sayi 0-100, YON ILE UYUMLU SIRALI)
 - kalan_mum (1-3), mum_yonu, hareket_aciklamasi, sonraki_hamle, uyari
 - m1_bolge (object: x, y, w, h)"""
 
@@ -226,9 +223,9 @@ def init_db():
         """)
         conn.commit()
         conn.close()
-        print("✅ DB hazır", flush=True)
+        print("DB hazir", flush=True)
     except Exception as e:
-        print(f"DB init hatası: {e}", flush=True)
+        print(f"DB init hatasi: {e}", flush=True)
 
 def get_offset():
     try:
@@ -247,7 +244,7 @@ def save_offset(offset):
         conn.commit()
         conn.close()
     except Exception as e:
-        print(f"Offset hatası: {e}", flush=True)
+        print(f"Offset hatasi: {e}", flush=True)
 
 def save_analysis(cid, sembol, a):
     try:
@@ -270,7 +267,7 @@ def save_analysis(cid, sembol, a):
         conn.close()
         return rid
     except Exception as e:
-        print(f"save_analysis hatası: {e}", flush=True)
+        print(f"save_analysis hatasi: {e}", flush=True)
         return None
 
 def update_sonuc(analiz_id, sonuc):
@@ -282,7 +279,7 @@ def update_sonuc(analiz_id, sonuc):
         conn.close()
         return degisti > 0
     except Exception as e:
-        print(f"update_sonuc hatası: {e}", flush=True)
+        print(f"update_sonuc hatasi: {e}", flush=True)
         return False
 
 def get_gecmis(cid, limit=10):
@@ -325,7 +322,7 @@ def get_istatistik(cid):
         conn.close()
         return {"total": total, "tuttu": tuttu, "tutmadi": tutmadi, "semboller": semboller}
     except Exception as e:
-        print(f"istatistik hatası: {e}", flush=True)
+        print(f"istatistik hatasi: {e}", flush=True)
         return {"total": 0, "tuttu": 0, "tutmadi": 0, "semboller": []}
 
 # ==========================================
@@ -342,7 +339,7 @@ def send_msg(cid, text, parse_mode=None, reply_markup=None):
                           json=payload, timeout=10)
         return r.json().get("result", {}).get("message_id")
     except Exception as e:
-        print(f"send_msg hatası: {e}", flush=True)
+        print(f"send_msg hatasi: {e}", flush=True)
         return None
 
 def send_photo(cid, photo_bytes, caption="", reply_markup=None):
@@ -354,7 +351,7 @@ def send_photo(cid, photo_bytes, caption="", reply_markup=None):
                           data=data, files={"photo": ("chart.png", photo_bytes)}, timeout=30)
         return r.json().get("result", {}).get("message_id")
     except Exception as e:
-        print(f"send_photo hatası: {e}", flush=True)
+        print(f"send_photo hatasi: {e}", flush=True)
         return None
 
 def edit_reply_markup(cid, message_id, reply_markup=None):
@@ -363,7 +360,7 @@ def edit_reply_markup(cid, message_id, reply_markup=None):
                       json={"chat_id": cid, "message_id": message_id, "reply_markup": reply_markup or {"inline_keyboard": []}},
                       timeout=10)
     except Exception as e:
-        print(f"edit_markup hatası: {e}", flush=True)
+        print(f"edit_markup hatasi: {e}", flush=True)
 
 def edit_message_text(cid, message_id, text, parse_mode=None, reply_markup=None):
     try:
@@ -375,7 +372,7 @@ def edit_message_text(cid, message_id, text, parse_mode=None, reply_markup=None)
         requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/editMessageText",
                       json=payload, timeout=10)
     except Exception as e:
-        print(f"edit_text hatası: {e}", flush=True)
+        print(f"edit_text hatasi: {e}", flush=True)
 
 def get_file_bytes(file_id):
     r = requests.get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getFile",
@@ -418,7 +415,7 @@ def caption_to_symbol(caption):
     return None
 
 # ==========================================
-# HİBRİT SL/TP KIRPMA
+# HIBRIT SL/TP KIRPMA
 # ==========================================
 def kirp_sl_tp(sembol, giris, gemini_sl, gemini_tp1, gemini_tp2):
     try:
@@ -474,7 +471,7 @@ def check_rate_limit(cid):
     return True
 
 # ==========================================
-# GEMINI İSTEK YÖNETİCİSİ
+# GEMINI ISTEK YONETICISI
 # ==========================================
 def gemini_istek_at(url, payload, headers):
     global SON_ISTEK_ZAMANI
@@ -487,10 +484,10 @@ def gemini_istek_at(url, payload, headers):
         return resp
 
 # ==========================================
-# GEMINI ANALİZ
+# GEMINI ANALIZ
 # ==========================================
 def analyze_chart(images_bytes_list, cid, sembol, coklu=False):
-    print(f"🔍 Analiz başladı (Sembol: {sembol}, Görsel: {len(images_bytes_list)}, Çoklu: {coklu})", flush=True)
+    print(f"Analiz basladi (Sembol: {sembol}, Gorsel: {len(images_bytes_list)}, Coklu: {coklu})", flush=True)
 
     atr = SYMBOL_ATR.get(sembol, VARSAYILAN_ATR)
     min_sl = int(atr * MIN_ATR_CARPAN)
@@ -568,12 +565,12 @@ def analyze_chart(images_bytes_list, cid, sembol, coklu=False):
     for deneme in range(max_deneme):
         try:
             resp = gemini_istek_at(GEMINI_URL, payload, headers)
-            print(f"🔍 Gemini HTTP = {resp.status_code} (Deneme {deneme+1}/{max_deneme})", flush=True)
+            print(f"Gemini HTTP = {resp.status_code} (Deneme {deneme+1}/{max_deneme})", flush=True)
 
             if resp.status_code == 200:
                 a = json_parse_et(resp, cid)
                 if a:
-                    print(f"✅ Analiz başarılı", flush=True)
+                    print(f"Analiz basarili", flush=True)
                     return a
                 else:
                     return None
@@ -605,7 +602,7 @@ def json_parse_et(resp, cid):
             fr = r["candidates"][0].get("finishReason", "?")
         except:
             fr = "?"
-        print(f"❌ Boş cevap. finishReason={fr}", flush=True)
+        print(f"Bos cevap. finishReason={fr}", flush=True)
         send_msg(cid, f"❌ Gemini boş cevap döndü. (Sebep: {fr})")
         return None
 
@@ -623,13 +620,13 @@ def json_parse_et(resp, cid):
     try:
         a = json.loads(text)
     except json.JSONDecodeError:
-        bas = text.find('{'); son = text.rfind('}')
+        bas = text.find('{')
+        son = text.rfind('}')
         if bas != -1 and son > bas:
             try:
                 a = json.loads(text[bas:son+1])
             except Exception as e2:
-                print(f"Kurtarma başarısız: {e2}", flush=True)
-                print(f"❌ Ham cevap: {text[:600]}", flush=True)
+                print(f"Kurtarma basarisiz: {e2}", flush=True)
                 send_msg(cid, "❌ Gemini cevabı bozuk JSON.")
                 return None
         else:
@@ -637,8 +634,7 @@ def json_parse_et(resp, cid):
                 fr = r["candidates"][0].get("finishReason", "?")
             except:
                 fr = "?"
-            print(f"❌ JSON YOK. finishReason={fr}", flush=True)
-            print(f"❌ Ham cevap: {text[:600]}", flush=True)
+            print(f"JSON YOK. finishReason={fr}", flush=True)
             send_msg(cid, f"❌ Gemini JSON vermedi. (Sebep: {fr})")
             return None
 
@@ -666,11 +662,11 @@ def json_parse_et(resp, cid):
     except:
         a["kalan_mum"] = 1
 
-    print(f"🎯 M1 bölge: {a.get('m1_bolge')} | Yön: {a.get('yon')} | Giriş: {a.get('giris')}", flush=True)
+    print(f"M1 bolge: {a.get('m1_bolge')} | Yon: {a.get('yon')} | Giris: {a.get('giris')}", flush=True)
     return a
 
 # ==========================================
-# PROJEKSİYON ÇİZİMİ
+# PROJEKSIYON CIZIMI
 # ==========================================
 def draw_projection(img_bytes, yon, puanlar, sembol="XAU/USD", m1_bolge=None):
     img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
@@ -691,11 +687,11 @@ def draw_projection(img_bytes, yon, puanlar, sembol="XAU/USD", m1_bolge=None):
     if yon == "SHORT":
         if temiz[0] < temiz[-1]:
             temiz = temiz[::-1]
-            print("🔧 SHORT için yol_puani ters çevrildi", flush=True)
+            print("SHORT icin yol_puani ters cevrildi", flush=True)
     elif yon == "LONG":
         if temiz[0] > temiz[-1]:
             temiz = temiz[::-1]
-            print("🔧 LONG için yol_puani ters çevrildi", flush=True)
+            print("LONG icin yol_puani ters cevrildi", flush=True)
 
     if m1_bolge and all(k in m1_bolge for k in ["x", "y", "w", "h"]):
         try:
@@ -707,9 +703,9 @@ def draw_projection(img_bytes, yon, puanlar, sembol="XAU/USD", m1_bolge=None):
             by = max(0, min(by, H - 50))
             bw = max(50, min(bw, W - bx))
             bh = max(50, min(bh, H - by))
-            print(f"🎯 M1 piksel bölge: x={bx} y={by} w={bw} h={bh}", flush=True)
+            print(f"M1 piksel bolge: x={bx} y={by} w={bw} h={bh}", flush=True)
         except Exception as ex:
-            print(f"M1 bölge parse hatası: {ex}", flush=True)
+            print(f"M1 bolge parse hatasi: {ex}", flush=True)
             bx, by, bw, bh = 0, 0, W, H
     else:
         bx, by, bw, bh = 0, 0, W, H
@@ -837,7 +833,8 @@ def build_card(a, sembol="XAU/USD", coklu=False):
     t.append(a.get('kisa_analiz', ''))
     t.append("")
     t.append("🔍 GEREKÇELER")
-    for g in str(a.get("gerekce", "")).replace("\\n", "\n").split("\n"):
+    gerekce_text = str(a.get("gerekce", "")).replace("\\n", "\n")
+    for g in gerekce_text.split("\n"):
         if g.strip():
             t.append(f"• {g.strip()}")
 
@@ -846,7 +843,7 @@ def build_card(a, sembol="XAU/USD", coklu=False):
     return "\n".join(t)
 
 # ==========================================
-# MENÜ FONKSİYONLARI
+# MENU FONKSIYONLARI
 # ==========================================
 def _ana_menu_buton():
     return {"inline_keyboard": [[{"text": "🔙 Ana Menü", "callback_data": "menu:ana"}]]}
@@ -976,15 +973,20 @@ def handle_command(cid, text):
     cmd = text.split()[0].lower() if text else ""
 
     if cmd in ("/menu", "/start"):
-        show_menu(cid); return
+        show_menu(cid)
+        return
     if cmd == "/yardim":
-        show_yardim(cid); return
+        show_yardim(cid)
+        return
     if cmd == "/gecmis":
-        show_gecmis(cid); return
+        show_gecmis(cid)
+        return
     if cmd == "/istatistik":
-        show_istatistik(cid); return
+        show_istatistik(cid)
+        return
     if cmd == "/semboller":
-        show_semboller(cid); return
+        show_semboller(cid)
+        return
 
     send_msg(cid, "ℹ️ Fotoğraf at ve altına sembol yaz. Menü için /menu")
 
@@ -992,10 +994,9 @@ def handle_callback(cq):
     try:
         cid = cq["message"]["chat"]["id"]
 
-        # Yetki kontrolü
         if int(cid) != int(ADMIN_ID):
             requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/answerCallbackQuery",
-                          json={"callback_query_id": cq["id"], "text": "🔒 Bu bot özel kullanımdadır."}, timeout=10)
+                          json={"callback_query_id": cq["id"], "text": "Bu bot ozel kullanimdadir."}, timeout=10)
             return
 
         message_id = cq["message"]["message_id"]
@@ -1006,15 +1007,20 @@ def handle_callback(cq):
                       json={"callback_query_id": cb_id}, timeout=10)
 
         if data == "menu:ana":
-            show_menu(cid, message_id); return
+            show_menu(cid, message_id)
+            return
         if data == "menu:gecmis":
-            show_gecmis(cid, message_id); return
+            show_gecmis(cid, message_id)
+            return
         if data == "menu:istatistik":
-            show_istatistik(cid, message_id); return
+            show_istatistik(cid, message_id)
+            return
         if data == "menu:semboller":
-            show_semboller(cid, message_id); return
+            show_semboller(cid, message_id)
+            return
         if data == "menu:yardim":
-            show_yardim(cid, message_id); return
+            show_yardim(cid, message_id)
+            return
 
         if data.startswith("sonuc:"):
             _, sonuc, aid_str = data.split(":")
@@ -1026,10 +1032,10 @@ def handle_callback(cq):
             else:
                 send_msg(cid, "⚠️ Bu analiz zaten işaretlenmiş.")
     except Exception as e:
-        print(f"callback hatası: {e}", flush=True)
+        print(f"callback hatasi: {e}", flush=True)
 
 # ==========================================
-# ALBÜM BUFFER
+# ALBUM BUFFER
 # ==========================================
 ALBUM_BUFFER = {}
 ALBUM_LOCK = threading.Lock()
@@ -1055,7 +1061,7 @@ def get_ready_albums():
     return ready
 
 # ==========================================
-# ANALİZ AKIŞI
+# ANALIZ AKISI
 # ==========================================
 def process_analysis(cid, images_bytes_list, sembol, coklu):
     send_msg(cid, f"⏳ {sembol} analiz ediliyor... ({'M30+M15+M1' if coklu else 'Tek Grafik'})")
@@ -1102,10 +1108,10 @@ def process_analysis(cid, images_bytes_list, sembol, coklu):
                 rr = hesap["tp1_mesafe"] / hesap["sl_mesafe"] if hesap["sl_mesafe"] > 0 else 0
                 a["risk_odul"] = f"1:{round(rr, 2)}"
 
-                print(f"🧮 ATR={hesap['atr']} | Sınır={hesap['min_mesafe']}-{hesap['max_mesafe']} | Gemini SL={hesap['gemini_sl_mesafe']} TP1={hesap['gemini_tp1_mesafe']} | Kırpılmış SL={hesap['sl_mesafe']} TP1={hesap['tp1_mesafe']}", flush=True)
+                print(f"ATR={hesap['atr']} | Sinir={hesap['min_mesafe']}-{hesap['max_mesafe']} | Gemini SL={hesap['gemini_sl_mesafe']} TP1={hesap['gemini_tp1_mesafe']} | Kirpilmis SL={hesap['sl_mesafe']} TP1={hesap['tp1_mesafe']}", flush=True)
             else:
                 a["yon"] = "BEKLE"
-                a["uyari"] = "SL/TP hesaplanamadı."
+                a["uyari"] = "SL/TP hesaplanamadi."
         else:
             a["yon"] = "BEKLE"
             a["uyari"] = "SL/TP verisi eksik."
@@ -1137,12 +1143,12 @@ def process_analysis(cid, images_bytes_list, sembol, coklu):
         send_msg(cid, kart, reply_markup=reply_markup)
 
 # ==========================================
-# ANA DÖNGÜ
+# ANA DONGU
 # ==========================================
 def main():
     threading.Thread(target=run_health_server, daemon=True).start()
     init_db()
-    print(f"=== SENTETİK ANALİZ BOTU v29-ÖZEL BAŞLADI (Sadece ID: {ADMIN_ID}) ===", flush=True)
+    print(f"=== SENTETIK ANALIZ BOTU v29-OZEL BASLADI (Sadece ID: {ADMIN_ID}) ===", flush=True)
     offset = get_offset()
 
     while True:
@@ -1163,17 +1169,13 @@ def main():
                 if not cid:
                     continue
 
-                # ==========================================
-                # ÖZEL KULLANIM KONTROLÜ
-                # ==========================================
+                # OZEL KULLANIM KONTROLU
                 if int(cid) != int(ADMIN_ID):
-                    # Sadece bir kere uyarı ver (spam olmasın)
                     try:
                         send_msg(cid, "🔒 *Bu bot özel kullanımdadır.*\n\nErişim izniniz yok.", parse_mode="Markdown")
                     except:
                         pass
                     continue
-                # ==========================================
 
                 if "photo" in msg:
                     mgid = msg.get("media_group_id")
@@ -1207,7 +1209,6 @@ def main():
                     photos = data["photos"]
                     cid = data["cid"]
 
-                    # Özel kullanım kontrolü
                     if int(cid) != int(ADMIN_ID):
                         continue
 
@@ -1236,7 +1237,7 @@ def main():
                         process_analysis(cid, images, sembol, coklu=False)
 
                 except Exception as e:
-                    print(f"Albüm işleme hatası: {e}", flush=True)
+                    print(f"Album isleme hatasi: {e}", flush=True)
                     try:
                         send_msg(data["cid"], f"❌ Albüm hatası: {str(e)[:200]}")
                     except:
