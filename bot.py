@@ -17,6 +17,11 @@ SON_ISTEK_ZAMANI = [0.0]
 MIN_ISTEK_ARASI = 3.0
 
 # ==========================================
+# ÖZEL KULLANIM: Sadece bu ID kullanabilir
+# ==========================================
+ADMIN_ID = 5504006147
+
+# ==========================================
 # DESTEKLENEN SEMBOLLER
 # ==========================================
 ALLOWED_SYMBOLS = [
@@ -29,7 +34,7 @@ ALLOWED_SYMBOLS_NORM = {
 }
 
 # ==========================================
-# M1 SEMBOL ATR DEĞERLERİ (Gemini'ye referans)
+# M1 SEMBOL ATR DEĞERLERİ
 # ==========================================
 SYMBOL_ATR = {
     "GainX 1200": 9,
@@ -45,11 +50,8 @@ SYMBOL_ATR = {
 }
 VARSAYILAN_ATR = 20
 
-# ==========================================
-# KIRPMA SINIRLARI (ATR çarpanı)
-# ==========================================
-MIN_ATR_CARPAN = 1.0   # Alt sınır: ATR x 1
-MAX_ATR_CARPAN = 3.0   # Üst sınır: ATR x 3
+MIN_ATR_CARPAN = 1.0
+MAX_ATR_CARPAN = 3.0
 
 # ==========================================
 # HEALTH SERVER
@@ -64,14 +66,15 @@ class Health(BaseHTTPRequestHandler):
 
 def run_health_server():
     port = int(os.environ.get("PORT", 10000))
-    HTTPServer(("0.0.0.0", port), Health).serve_forever()
+    HTTPServer(("0.0.0.0", port), Health).serve_fore.
+ver-()
 
 # ==========================================
-# ORTAK KURALLAR & PROMPT'LAR
-# ==========================================
+# OR LONGTAK KURALLAR & PROMP yT'LAR
+# =========================================ön=
 SEVIYE_KURALLARI = """
 M1 ODAKLI İŞLEM:
-Bu görselde M30, M15, M1 birlikte olabilir. Ama GİRİŞ SADECE M1 yapısına göre verilir.
+Bu görüselde M30, M15, M1 birlikte olabilir. Ama GİRİŞ SADECE M1 yapısına göre verilir.
 M30 ve M15 SADECE TREND ONAYI için kullanılır (yön doğrulaması).
 
 GİRİŞ NOKTASI:
@@ -87,8 +90,7 @@ Sana bu sembolün M1 ATR değeri bildirilecek.
 
 YOL PUANI SIRALAMASI:
 yol_puani dizisini YÖN ile uyumlu sırala.
-- SHORT yönünde: ilk puan EN YÜKSEK (örn: 90), son puan EN DÜŞÜK (örn: 10) olmalı.
-- LONG yönünde: ilk puan EN DÜŞÜK (örn: 10), son puan EN YÜKSEK (örn: 90) olmalı.
+- SHORT yönünde: ilk puan EN YÜKSEK (örn: 90), son puan EN DÜŞÜK (örn: 10) olmalınde: ilk puan EN DÜŞÜK (örn: 10), son puan EN YÜKSEK (örn: 90) olmalı.
 - BEKLE yönünde: yol_puani dizisi göndermek zorunlu değil.
 """
 
@@ -416,14 +418,9 @@ def caption_to_symbol(caption):
     return None
 
 # ==========================================
-# HİBRİT SL/TP KIRPMA FONKSİYONU
+# HİBRİT SL/TP KIRPMA
 # ==========================================
 def kirp_sl_tp(sembol, giris, gemini_sl, gemini_tp1, gemini_tp2):
-    """
-    Gemini'nin verdiği SL/TP fiyatlarını ATR sınırlarına göre kırpar.
-    - Min: ATR x 1
-    - Max: ATR x 3
-    """
     try:
         giris_f = float(str(giris).replace(",", "."))
         sl_f = float(str(gemini_sl).replace(",", "."))
@@ -436,15 +433,13 @@ def kirp_sl_tp(sembol, giris, gemini_sl, gemini_tp1, gemini_tp2):
     min_mesafe = atr * MIN_ATR_CARPAN
     max_mesafe = atr * MAX_ATR_CARPAN
 
-    # Gemini'nin verdiği mesafeler
     gemini_sl_mesafe = abs(giris_f - sl_f)
     gemini_tp1_mesafe = abs(giris_f - tp1_f)
     gemini_tp2_mesafe = abs(giris_f - tp2_f)
 
-    # Kırp
     sl_kirp = max(min_mesafe, min(gemini_sl_mesafe, max_mesafe))
     tp1_kirp = max(min_mesafe, min(gemini_tp1_mesafe, max_mesafe))
-    tp2_kirp = max(min_mesafe, min(gemini_tp2_mesafe, max_mesafe * 1.5))  # TP2 biraz daha serbest
+    tp2_kirp = max(min_mesafe, min(gemini_tp2_mesafe, max_mesafe * 1.5))
 
     return {
         "giris": round(giris_f, 2),
@@ -492,7 +487,7 @@ def gemini_istek_at(url, payload, headers):
         return resp
 
 # ==========================================
-# GEMINI ANALİZ (ATR REFERANSLI)
+# GEMINI ANALİZ
 # ==========================================
 def analyze_chart(images_bytes_list, cid, sembol, coklu=False):
     print(f"🔍 Analiz başladı (Sembol: {sembol}, Görsel: {len(images_bytes_list)}, Çoklu: {coklu})", flush=True)
@@ -661,7 +656,6 @@ def json_parse_et(resp, cid):
     if g < 65:
         a["yon"] = "BEKLE"
 
-    # kalan_mum 1-3 arası olmalı
     try:
         km = int(a.get("kalan_mum", 1))
         if km < 1:
@@ -975,7 +969,7 @@ def show_yardim(cid, message_id=None):
         send_msg(cid, text, "Markdown", _ana_menu_buton())
 
 # ==========================================
-# KOMUTLAR & CALLBACK
+# KOMUTLAR
 # ==========================================
 def handle_command(cid, text):
     text = (text or "").strip()
@@ -997,6 +991,13 @@ def handle_command(cid, text):
 def handle_callback(cq):
     try:
         cid = cq["message"]["chat"]["id"]
+
+        # Yetki kontrolü
+        if int(cid) != int(ADMIN_ID):
+            requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/answerCallbackQuery",
+                          json={"callback_query_id": cq["id"], "text": "🔒 Bu bot özel kullanımdadır."}, timeout=10)
+            return
+
         message_id = cq["message"]["message_id"]
         data = cq.get("data", "")
         cb_id = cq["id"]
@@ -1034,3 +1035,216 @@ ALBUM_BUFFER = {}
 ALBUM_LOCK = threading.Lock()
 
 def buffer_album_photo(mgid, msg):
+    with ALBUM_LOCK:
+        if mgid not in ALBUM_BUFFER:
+            ALBUM_BUFFER[mgid] = {"photos": [], "ts": time.time(), "cid": msg["chat"]["id"]}
+        ALBUM_BUFFER[mgid]["photos"].append(msg)
+        ALBUM_BUFFER[mgid]["ts"] = time.time()
+
+def get_ready_albums():
+    ready = []
+    now = time.time()
+    with ALBUM_LOCK:
+        to_delete = []
+        for mgid, data in ALBUM_BUFFER.items():
+            if len(data["photos"]) >= 3 or (now - data["ts"]) >= 3.0:
+                ready.append((mgid, data))
+                to_delete.append(mgid)
+        for mgid in to_delete:
+            del ALBUM_BUFFER[mgid]
+    return ready
+
+# ==========================================
+# ANALİZ AKIŞI
+# ==========================================
+def process_analysis(cid, images_bytes_list, sembol, coklu):
+    send_msg(cid, f"⏳ {sembol} analiz ediliyor... ({'M30+M15+M1' if coklu else 'Tek Grafik'})")
+
+    a = analyze_chart(images_bytes_list, cid, sembol, coklu=coklu)
+    if not a:
+        send_msg(cid, "❌ Analiz başarısız, tekrar deneyin.")
+        return
+
+    if a.get("yon") in ("LONG", "SHORT"):
+        gemini_sl = a.get("stop_loss")
+        gemini_tps = a.get("take_profit") or []
+        gemini_tp1 = gemini_tps[0] if len(gemini_tps) > 0 else None
+        gemini_tp2 = gemini_tps[1] if len(gemini_tps) > 1 else None
+
+        if gemini_sl and gemini_tp1 and a.get("giris"):
+            if not gemini_tp2:
+                try:
+                    g_f = float(str(a["giris"]).replace(",", "."))
+                    tp1_f = float(str(gemini_tp1).replace(",", "."))
+                    if a["yon"] == "SHORT":
+                        gemini_tp2 = str(tp1_f - abs(g_f - tp1_f) * 0.2)
+                    else:
+                        gemini_tp2 = str(tp1_f + abs(g_f - tp1_f) * 0.2)
+                except:
+                    gemini_tp2 = gemini_tp1
+
+            hesap = kirp_sl_tp(sembol, a.get("giris"), gemini_sl, gemini_tp1, gemini_tp2)
+            if hesap:
+                giris_f = hesap["giris"]
+                if a["yon"] == "SHORT":
+                    sl = giris_f + hesap["sl_mesafe"]
+                    tp1 = giris_f - hesap["tp1_mesafe"]
+                    tp2 = giris_f - hesap["tp2_mesafe"]
+                else:
+                    sl = giris_f - hesap["sl_mesafe"]
+                    tp1 = giris_f + hesap["tp1_mesafe"]
+                    tp2 = giris_f + hesap["tp2_mesafe"]
+
+                a["giris"] = str(round(giris_f, 2))
+                a["stop_loss"] = str(round(sl, 2))
+                a["take_profit"] = [str(round(tp1, 2)), str(round(tp2, 2))]
+
+                rr = hesap["tp1_mesafe"] / hesap["sl_mesafe"] if hesap["sl_mesafe"] > 0 else 0
+                a["risk_odul"] = f"1:{round(rr, 2)}"
+
+                print(f"🧮 ATR={hesap['atr']} | Sınır={hesap['min_mesafe']}-{hesap['max_mesafe']} | Gemini SL={hesap['gemini_sl_mesafe']} TP1={hesap['gemini_tp1_mesafe']} | Kırpılmış SL={hesap['sl_mesafe']} TP1={hesap['tp1_mesafe']}", flush=True)
+            else:
+                a["yon"] = "BEKLE"
+                a["uyari"] = "SL/TP hesaplanamadı."
+        else:
+            a["yon"] = "BEKLE"
+            a["uyari"] = "SL/TP verisi eksik."
+
+    aid = save_analysis(cid, sembol, a)
+    kart = build_card(a, sembol, coklu=coklu)
+
+    reply_markup = None
+    if a.get("yon") in ("LONG", "SHORT") and aid:
+        reply_markup = {"inline_keyboard": [[
+            {"text": "✅ Tuttu", "callback_data": f"sonuc:tuttu:{aid}"},
+            {"text": "❌ Tutmadı", "callback_data": f"sonuc:tutmadi:{aid}"}
+        ]]}
+
+    gorsel = None
+    if a.get("yon") != "BEKLE":
+        gorsel = draw_projection(
+            images_bytes_list[-1], a.get("yon"),
+            a.get("yol_puani", []), sembol, m1_bolge=a.get("m1_bolge")
+        )
+
+    if gorsel:
+        if len(kart) > 1024:
+            send_photo(cid, gorsel, caption=f"{sembol} | {a.get('yon')} | %{a.get('guven')}")
+            send_msg(cid, kart, reply_markup=reply_markup)
+        else:
+            send_photo(cid, gorsel, caption=kart, reply_markup=reply_markup)
+    else:
+        send_msg(cid, kart, reply_markup=reply_markup)
+
+# ==========================================
+# ANA DÖNGÜ
+# ==========================================
+def main():
+    threading.Thread(target=run_health_server, daemon=True).start()
+    init_db()
+    print(f"=== SENTETİK ANALİZ BOTU v29-ÖZEL BAŞLADI (Sadece ID: {ADMIN_ID}) ===", flush=True)
+    offset = get_offset()
+
+    while True:
+        try:
+            r = requests.get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates",
+                             params={"offset": offset, "timeout": 30}, timeout=40).json()
+
+            for u in r.get("result", []):
+                offset = u["update_id"] + 1
+                save_offset(offset)
+
+                if "callback_query" in u:
+                    handle_callback(u["callback_query"])
+                    continue
+
+                msg = u.get("message", {})
+                cid = msg.get("chat", {}).get("id")
+                if not cid:
+                    continue
+
+                # ==========================================
+                # ÖZEL KULLANIM KONTROLÜ
+                # ==========================================
+                if int(cid) != int(ADMIN_ID):
+                    # Sadece bir kere uyarı ver (spam olmasın)
+                    try:
+                        send_msg(cid, "🔒 *Bu bot özel kullanımdadır.*\n\nErişim izniniz yok.", parse_mode="Markdown")
+                    except:
+                        pass
+                    continue
+                # ==========================================
+
+                if "photo" in msg:
+                    mgid = msg.get("media_group_id")
+                    if mgid:
+                        buffer_album_photo(mgid, msg)
+                    else:
+                        if not check_rate_limit(cid):
+                            continue
+                        caption = (msg.get("caption") or "").strip()
+                        sembol = caption_to_symbol(caption)
+                        if not sembol:
+                            send_msg(cid, f"⚠️ Lütfen fotoğrafın altına sembolü tam yazın.\nÖrnek: `{ALLOWED_SYMBOLS[0]}`", parse_mode="Markdown")
+                            continue
+                        try:
+                            img_bytes = get_file_bytes(msg["photo"][-1]["file_id"])
+                            process_analysis(cid, [img_bytes], sembol, coklu=False)
+                        except Exception as e:
+                            send_msg(cid, f"❌ Hata: {str(e)[:200]}")
+                    continue
+
+                text = msg.get("text", "")
+                if text:
+                    handle_command(cid, text)
+                    continue
+
+                if not text and "photo" not in msg:
+                    send_msg(cid, "ℹ️ Fotoğraf at ve altına sembol yaz. Menü için /menu")
+
+            for mgid, data in get_ready_albums():
+                try:
+                    photos = data["photos"]
+                    cid = data["cid"]
+
+                    # Özel kullanım kontrolü
+                    if int(cid) != int(ADMIN_ID):
+                        continue
+
+                    if not check_rate_limit(cid):
+                        continue
+
+                    sembol = None
+                    for p in photos:
+                        cap = (p.get("caption") or "").strip()
+                        sembol = caption_to_symbol(cap)
+                        if sembol:
+                            break
+
+                    if not sembol:
+                        send_msg(cid, "⚠️ Albümdeki bir fotoğrafın altına sembolü yazın.\nÖrnek: `GainX 1200`", parse_mode="Markdown")
+                        continue
+
+                    images = []
+                    for p in photos[:3]:
+                        fid = p["photo"][-1]["file_id"]
+                        images.append(get_file_bytes(fid))
+
+                    if len(images) >= 2:
+                        process_analysis(cid, images, sembol, coklu=True)
+                    else:
+                        process_analysis(cid, images, sembol, coklu=False)
+
+                except Exception as e:
+                    print(f"Albüm işleme hatası: {e}", flush=True)
+                    try:
+                        send_msg(data["cid"], f"❌ Albüm hatası: {str(e)[:200]}")
+                    except:
+                        pass
+
+        except Exception as e:
+            print(f"=== LOOP HATASI: {e} ===", flush=True)
+            time.sleep(3)
+
+if __name__ == "__main__":
+    main()
