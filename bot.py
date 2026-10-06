@@ -17,23 +17,32 @@ SON_ISTEK_ZAMANI = [0.0]
 MIN_ISTEK_ARASI = 3.0
 
 # ==========================================
-# ÖZEL KULLANIM
+# OZEL KULLANIM
 # ==========================================
 ADMIN_ID = 5504006147
 
 # ==========================================
-# DESTEKLENEN SEMBOLLER
+# DESTEKLENEN SEMBOLLER (16 adet)
 # ==========================================
 ALLOWED_SYMBOLS = [
-    "GainX 1200", "GainX 999", "MAX GainX 1000", "MAX GainX 2000",
-    "MAX PainX 1000", "MAX PainX 2000", "PainX 1200", "PainX 400",
-    "PainX 800", "PainX 999",
+    "BreakX 1200", "BreakX 1800",
+    "GainX 1200", "GainX 999",
+    "MAX GainX 1000", "MAX GainX 2000",
+    "MAX PainX 1000", "MAX PainX 2000",
+    "PainX 1200", "PainX 400", "PainX 800", "PainX 999",
+    "SwitchX 1200", "SwitchX 1800",
+    "TrendX 1200", "TrendX 1800",
 ]
 ALLOWED_SYMBOLS_NORM = {
     s.lower().replace("-", " ").replace("/", " ").strip(): s for s in ALLOWED_SYMBOLS
 }
 
+# ==========================================
+# M1 SEMBOL ATR DEGERLERI
+# ==========================================
 SYMBOL_ATR = {
+    "BreakX 1200": 5,
+    "BreakX 1800": 5,
     "GainX 1200": 9,
     "GainX 999": 22,
     "MAX GainX 1000": 72,
@@ -44,6 +53,10 @@ SYMBOL_ATR = {
     "PainX 400": 10,
     "PainX 800": 7,
     "PainX 999": 19,
+    "SwitchX 1200": 5,
+    "SwitchX 1800": 4,
+    "TrendX 1200": 5,
+    "TrendX 1800": 5,
 }
 VARSAYILAN_ATR = 20
 
@@ -929,7 +942,7 @@ def show_istatistik(cid, message_id=None):
         send_msg(cid, text, "Markdown", _ana_menu_buton())
 
 def show_semboller(cid, message_id=None):
-    lines = ["📋 *DESTEKLENEN SEMBOLLER*", ""]
+    lines = ["📋 *DESTEKLENEN 16 SEMBOL*", ""]
     for s in ALLOWED_SYMBOLS:
         a = SYMBOL_ATR.get(s, VARSAYILAN_ATR)
         lines.append(f"• {s} — ATR: {a} puan")
@@ -940,6 +953,7 @@ def show_semboller(cid, message_id=None):
         send_msg(cid, text, "Markdown", _ana_menu_buton())
 
 def show_yardim(cid, message_id=None):
+    sembol_listesi = "\n".join([f"• `{s}`" for s in ALLOWED_SYMBOLS])
     text = (
         "❓ *YARDIM*\n\n"
         "📸 *Analiz nasıl yapılır?*\n"
@@ -951,6 +965,10 @@ def show_yardim(cid, message_id=None):
         "• 3 fotoğrafı tek seferde seç\n"
         "• Sıra: M30 → M15 → M1\n"
         "• Caption birine ekle\n\n"
+        "━━━━━━━━━━━━━━━━━━━\n"
+        "📋 *DESTEKLENEN 16 SEMBOL*\n"
+        "━━━━━━━━━━━━━━━━━━━\n\n"
+        + sembol_listesi + "\n\n"
         "🎯 *Sonuç işaretleme:*\n"
         "Analizden sonra ✅ Tuttu / ❌ Tutmadı butonuna bas\n\n"
         "📊 *Komutlar:*\n"
@@ -1148,7 +1166,7 @@ def process_analysis(cid, images_bytes_list, sembol, coklu):
 def main():
     threading.Thread(target=run_health_server, daemon=True).start()
     init_db()
-    print(f"=== SENTETIK ANALIZ BOTU v29-OZEL BASLADI (Sadece ID: {ADMIN_ID}) ===", flush=True)
+    print(f"=== SENTETIK ANALIZ BOTU v30-OZEL BASLADI (16 SEMBOL, ID: {ADMIN_ID}) ===", flush=True)
     offset = get_offset()
 
     while True:
