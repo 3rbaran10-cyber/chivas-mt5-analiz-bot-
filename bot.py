@@ -33,9 +33,21 @@ DERIV_APP_ID = "1089"
 
 # Birden fazla endpoint dene
 DERIV_ENDPOINTS = [
-    f"wss://ws.derivws.com/websockets/v3?app_id={DERIV_APP_ID}&l=TR&lang=tr",
     f"wss://ws.derivws.com/websockets/v3?app_id={DERIV_APP_ID}",
-    f"wss://ws.binaryws.com/websockets/v3?app_id={DERIV_APP_ID}",
+    f"wss://green.derivws.com/websockets/v3?app_id={DERIV_APP_ID}",
+    f"wss://blue.derivws.com/websockets/v3?app_id={DERIV_APP_ID}",
+    f"wss://frontend.derivws.com/websockets/v3?app_id={DERIV_APP_ID}",
+    f"wss://ws.binaryws.com/websockets/v3?app_id=1",
+]
+
+# Tarayıcı gibi görünmek için header'lar
+BROWSER_HEADERS = [
+    "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Origin: https://app.deriv.com",
+    "Accept-Language: en-US,en;q=0.9",
+    "Accept-Encoding: gzip, deflate, br",
+    "Pragma: no-cache",
+    "Cache-Control: no-cache",
 ]
 
 SYMBOLS = [
@@ -70,42 +82,79 @@ def run_health_server():
     HTTPServer(("0.0.0.0", port), Health).serve_forever()
 
 # ==========================================
-# DERIV ISTEK
+# DERIV ISTEK - HEADER'LI + COKLU ENDPOINT
 # ==========================================
 _deriv_lock = threading.Lock()
+_calisan_endpoint = [None]  # Cache başarılı endpoint
 
-def deriv_call(payload, timeout=25, max_deneme=3):
-    """Deriv WebSocket - çoklu endpoint + retry."""
+def _tek_deneme(endpoint, payload, timeout=25):
+    """Tek bir endpoint'e bağlan ve istek at."""
+    ws = None
+    try:
+        ws = websocket.create_connection(
+            endpoint,
+            timeout=timeout,
+            sslopt={"cert_reqs": ssl.CERT_NONE},
+            header=BROWSER_HEADERS,
+            enable_multithread=True,
+            skip_utf8_validation=True,
+        )
+        ws.send(json.dumps(payload))
+        start = time.time()
+        while time.time() - start < timeout:
+            try:
+                raw = ws.recv()
+            except Exception:
+                break
+            if not raw:
+                break
+            try:
+                msg = json.loads(raw)
+            except Exception:
+                continue
+            if msg.get("req_id") == payload.get("req_id"):
+                if "error" in msg:
+                    print(f"Deriv error: {msg['error']}", flush=True)
+                    return None
+                return msg
+        return None
+    except Exception as e:
+        raise e
+    finally:
+        if ws:
+            try: ws.close()
+            except: pass
+
+def deriv_call(payload, timeout=25):
+    """Önce daha önce çalışan endpoint'i dene, olmazsa hepsini dene."""
     req_id = payload.get("req_id", 1)
     with _deriv_lock:
+        # 1) Daha önce çalışan endpoint
+        if _calisan_endpoint[0]:
+            try:
+                r = _tek_deneme(_calisan_endpoint[0], payload, timeout)
+                if r is not None:
+                    return r
+            except Exception as e:
+                print(f"Calisan endpoint hata: {str(e)[:120]}", flush=True)
+                _calisan_endpoint[0] = None
+
+        # 2) Hepsini dene
         for endpoint in DERIV_ENDPOINTS:
-            for deneme in range(max_deneme):
-                ws = None
+            for deneme in range(2):
                 try:
-                    ws = websocket.create_connection(
-                        endpoint, timeout=timeout,
-                        sslopt={"cert_reqs": ssl.CERT_NONE},
-                        enable_multithread=True
-                    )
-                    ws.send(json.dumps(payload))
-                    start = time.time()
-                    while time.time() - start < timeout:
-                        raw = ws.recv()
-                        if not raw: break
-                        msg = json.loads(raw)
-                        if msg.get("req_id") == req_id:
-                            if "error" in msg:
-                                print(f"Deriv error: {msg['error']}", flush=True)
-                                return None
-                            return msg
-                    print(f"Deriv timeout ({endpoint[:40]})", flush=True)
+                    r = _tek_deneme(endpoint, payload, timeout)
+                    if r is not None:
+                        _calisan_endpoint[0] = endpoint
+                        print(f"✅ Deriv endpoint OK: {endpoint[:50]}", flush=True)
+                        return r
                 except Exception as e:
-                    print(f"Deriv baglanti hatasi ({endpoint[:40]}, deneme {deneme+1}): {str(e)[:100]}", flush=True)
-                    time.sleep(1.5)
-                finally:
-                    if ws:
-                        try: ws.close()
-                        except: pass
+                    err = str(e)[:120]
+                    print(f"❌ {endpoint[:45]} (deneme {deneme+1}): {err}", flush=True)
+                    if "520" in err or "502" in err or "503" in err:
+                        # Cloudflare blok - bu endpoint'i atla
+                        break
+                    time.sleep(1)
         return None
 
 def get_candles(symbol, granularity, count=100):
@@ -396,7 +445,6 @@ def edit_message_text(cid, mid, text, pm=None, rm=None):
 def temizle_sayi(d):
     if d is None: return d
     s = str(d).strip().replace(" ", "")
-    # Binlik ayraç temizle
     if s.count(",") > 1: s = s.replace(",", "")
     if s.count(".") > 1: s = s.replace(".", "", s.count(".") - 1)
     if "," in s and "." not in s: s = s.replace(",", ".")
@@ -676,77 +724,62 @@ def show_yardim(cid, mid=None):
 # DEBUG
 # ==========================================
 def debug_deriv(cid):
-    lines = ["🔧 *DERIV DEBUG*", ""]
+    lines = ["🔧 *DERIV DEBUG v2*", ""]
     lines.append("1️⃣ Bağlantı test ediliyor...")
+    lines.append("(Tarayıcı header'lı, 5 endpoint denenecek)")
+    lines.append("")
 
-    ws = None
-    basarili_ep = None
+    basarili = None
     for ep in DERIV_ENDPOINTS:
         try:
-            ws = websocket.create_connection(ep, timeout=15,
-                                              sslopt={"cert_reqs": ssl.CERT_NONE})
-            basarili_ep = ep
+            ws = websocket.create_connection(
+                ep, timeout=15,
+                sslopt={"cert_reqs": ssl.CERT_NONE},
+                header=BROWSER_HEADERS,
+                skip_utf8_validation=True,
+            )
+            basarili = ep
+            try: ws.close()
+            except: pass
             break
         except Exception as e:
-            lines.append(f"❌ {ep[:50]}...")
-            lines.append(f"   `{str(e)[:120]}`")
-            ws = None
+            lines.append(f"❌ `{ep[:50]}...`")
+            lines.append(f"   `{str(e)[:100]}`")
+            lines.append("")
 
-    if not ws:
-        lines.append("")
-        lines.append("🔴 Hiçbir endpoint'e bağlanılamadı.")
+    if not basarili:
+        lines.append("🔴 Hiçbir endpoint açılmadı.")
         send_msg(cid, "\n".join(lines), "Markdown")
         return
 
     lines.append(f"✅ Bağlantı OK")
-    lines.append(f"   `{basarili_ep[:55]}...`")
-
-    # active_symbols
+    lines.append(f"   `{basarili[:55]}...`")
     lines.append("")
-    lines.append("2️⃣ Sembol listesi çekiliyor...")
-    try:
-        ws.send(json.dumps({"active_symbols": "brief", "product_type": "basic", "req_id": 999}))
-        resp = None; start = time.time()
-        while time.time() - start < 15:
-            raw = ws.recv()
-            if not raw: break
-            m = json.loads(raw)
-            if m.get("req_id") == 999:
-                resp = m; break
-        ws.close()
 
-        if not resp or "active_symbols" not in resp:
-            lines.append("❌ Sembol listesi alınamadı")
-            if resp and "error" in resp:
-                lines.append(f"   `{resp['error']}`")
-            send_msg(cid, "\n".join(lines), "Markdown")
-            return
+    # Sembol testi
+    lines.append("2️⃣ active_symbols testi...")
+    resp = deriv_call({"active_symbols": "brief", "product_type": "basic", "req_id": 999})
+    if not resp:
+        lines.append("❌ active_symbols alınamadı.")
+        send_msg(cid, "\n".join(lines), "Markdown")
+        return
 
-        all_s = resp["active_symbols"]
-        lines.append(f"✅ Toplam *{len(all_s)}* sembol")
-        lines.append("")
-        lines.append("3️⃣ Crash/Boom sembolleri Deriv'de:")
-        cb = [s for s in all_s if "Crash" in s.get("display_name","") or "Boom" in s.get("display_name","")]
-        if not cb:
-            lines.append("❌ Hiç Crash/Boom yok!")
-        else:
-            for s in cb:
-                lines.append(f"• `{s['symbol']}` → {s['display_name']}")
+    all_s = resp.get("active_symbols", [])
+    lines.append(f"✅ Toplam *{len(all_s)}* sembol")
+    lines.append("")
+    lines.append("3️⃣ Crash/Boom sembolleri:")
+    cb = [s for s in all_s if "Crash" in s.get("display_name","") or "Boom" in s.get("display_name","")]
+    if not cb:
+        lines.append("❌ Hiç yok!")
+    else:
+        for s in cb:
+            lines.append(f"• `{s['symbol']}` → {s['display_name']}")
 
-        # Canlı fiyat testi
-        lines.append("")
-        lines.append("4️⃣ Canlı fiyat testi (CRASH1000):")
-        try:
-            f = get_current_price("CRASH1000")
-            if f: lines.append(f"✅ Fiyat: `{f}`")
-            else: lines.append("❌ Fiyat alınamadı")
-        except Exception as e:
-            lines.append(f"❌ Hata: `{str(e)[:100]}`")
-
-    except Exception as e:
-        lines.append(f"❌ Hata: `{str(e)[:150]}`")
-        try: ws.close()
-        except: pass
+    lines.append("")
+    lines.append("4️⃣ Canlı fiyat testi (CRASH1000):")
+    f = get_current_price("CRASH1000")
+    if f: lines.append(f"✅ Fiyat: `{f}`")
+    else: lines.append("❌ Fiyat alınamadı")
 
     send_msg(cid, "\n".join(lines), "Markdown")
 
@@ -822,7 +855,7 @@ def process_analysis(cid, symbol):
 
     fiyat = get_current_price(symbol)
     if not fiyat:
-        send_msg(cid, f"❌ {isim} için anlık fiyat alınamadı.\nSorunu görmek için `/debug` yaz.", "Markdown")
+        send_msg(cid, f"❌ {isim} için anlık fiyat alınamadı.\n`/debug` yaz.", "Markdown")
         return
 
     m1  = get_candles(symbol, TF_M1,  100)
@@ -845,7 +878,6 @@ def process_analysis(cid, symbol):
     if not a:
         send_msg(cid, "❌ Analiz başarısız."); return
 
-    # Giriş = anlık fiyat (ZORLA)
     if a.get("yon") in ("LONG", "SHORT"):
         a["giris"] = str(fiyat)
         gemini_sl = a.get("stop_loss")
@@ -903,7 +935,7 @@ def process_analysis(cid, symbol):
 def main():
     threading.Thread(target=run_health_server, daemon=True).start()
     init_db()
-    print(f"=== DERIV BOT v2 BASLADI (ID: {ADMIN_ID}) ===", flush=True)
+    print(f"=== DERIV BOT v3 (header'li) BASLADI (ID: {ADMIN_ID}) ===", flush=True)
     offset = get_offset()
 
     while True:
