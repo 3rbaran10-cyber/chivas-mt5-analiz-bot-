@@ -27,9 +27,8 @@ MIN_ISTEK_ARASI = 3.0
 ADMIN_ID = 5504006147
 
 # ==========================================
-# DERIV (YENİ API)
+# DERIV (YENI PUBLIC API)
 # ==========================================
-DERIV_APP_ID = "1089"  # Artık kullanılmıyor ama kodda kalsın
 DERIV_ENDPOINTS = [
     "wss://api.derivws.com/trading/v1/options/ws/public",
 ]
@@ -66,12 +65,11 @@ def run_health_server():
     HTTPServer(("0.0.0.0", port), Health).serve_forever()
 
 # ==========================================
-# DERIV ISTEK (YENİ)
+# DERIV ISTEK
 # ==========================================
 _deriv_lock = threading.Lock()
 
 def _tek_deneme(endpoint, payload, timeout=30):
-    """Yeni public endpoint'e bağlan ve istek at."""
     ws = None
     try:
         ws = websocket.create_connection(
@@ -109,7 +107,6 @@ def _tek_deneme(endpoint, payload, timeout=30):
             except: pass
 
 def deriv_call(payload, timeout=30):
-    """Yeni public endpoint'e istek at."""
     with _deriv_lock:
         for endpoint in DERIV_ENDPOINTS:
             print(f"Deneniyor: {endpoint}", flush=True)
@@ -717,7 +714,6 @@ def debug_deriv(cid):
     lines.append(f"   `{basarili[:60]}...`")
     lines.append("")
 
-    # Sembol testi
     lines.append("2️⃣ active_symbols testi...")
     resp = deriv_call({"active_symbols": "brief", "product_type": "basic", "req_id": 999})
     if not resp:
