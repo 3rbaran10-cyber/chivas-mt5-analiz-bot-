@@ -1,2 +1,4 @@
 requests
 Pillow
+websocket-client
+matplotlib
