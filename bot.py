@@ -48,7 +48,9 @@ TF_H1, TF_M30, TF_M15, TF_M1 = 3600, 1800, 900, 60
 GRAFIK_MUM_SAYISI = 100
 ATR_PERIOD = 50
 VARSAYILAN_ATR = 50
-MIN_ATR_CARPAN, MAX_ATR_CARPAN = 1.0, 2.5
+
+# M15 ATR bazli SL/TP
+MIN_ATR_CARPAN, MAX_ATR_CARPAN = 1.0, 2.0
 MIN_RR_TP1 = 1.3
 
 _ATR_CACHE, _ATR_CACHE_TTL = {}, 60
@@ -156,19 +158,6 @@ def calculate_atr(candles, period=50):
     medyan = (son[mid] + son[mid-1]) / 2 if len(son) % 2 == 0 else son[mid]
     return round(medyan, 4)
 
-def resolve_atr(symbol):
-    """M1 ATR (SL/TP icin)."""
-    now = time.time()
-    cached = _ATR_CACHE.get(symbol)
-    if cached and (now - cached[1]) < _ATR_CACHE_TTL:
-        return cached[0]
-    candles = get_candles(symbol, TF_M1, ATR_PERIOD + 10)
-    atr = calculate_atr(candles, ATR_PERIOD) if candles else None
-    if atr and atr > 0:
-        _ATR_CACHE[symbol] = (atr, now)
-        return atr
-    return VARSAYILAN_ATR
-
 # ==========================================
 # GRAFIK - 4 TF RENKLI + NUMARALI
 # ==========================================
@@ -209,7 +198,7 @@ def draw_chart_4tf(symbol, isim, fiyat, atr_h1, atr_m30, atr_m15, atr_m1):
         fig.patch.set_facecolor('white')
 
         fig.suptitle(
-            f"{isim}   |   GUNCEL FIYAT: {fiyat}   |   M1 ATR: {atr_m1}",
+            f"{isim}   |   GUNCEL FIYAT: {fiyat}   |   M15 ATR: {atr_m15}",
             fontsize=17, fontweight='bold', y=0.985
         )
 
@@ -245,9 +234,10 @@ def draw_chart_4tf(symbol, isim, fiyat, atr_h1, atr_m30, atr_m15, atr_m1):
         return buf.getvalue()
 
 # ==========================================
-# KIRPMA (SL/TP)
+# KIRPMA (SL/TP) - M15 ATR BAZLI
 # ==========================================
-def kirp_sl_tp(symbol, giris, gemini_sl, gemini_tp1, gemini_tp2):
+def kirp_sl_tp(symbol, giris, gemini_sl, gemini_tp1, gemini_tp2, atr_m15):
+    """SL/TP mesafesi M15 ATR uzerinden hesaplanir (Crash/Boom icin gercek volatilite)."""
     try:
         giris_f = float(str(giris).replace(",", "."))
         sl_f    = float(str(gemini_sl).replace(",", "."))
@@ -255,16 +245,19 @@ def kirp_sl_tp(symbol, giris, gemini_sl, gemini_tp1, gemini_tp2):
         tp2_f   = float(str(gemini_tp2).replace(",", "."))
     except: return None
 
-    atr = resolve_atr(symbol)
+    atr = atr_m15 if atr_m15 and atr_m15 > 0 else 10
     min_m = atr * MIN_ATR_CARPAN
     max_m = atr * MAX_ATR_CARPAN
 
+    # Gemini SL onerisini ATR araligina sikistir
     sl_k = max(min_m, min(abs(giris_f - sl_f), max_m))
 
+    # TP1: en az SL × 1.3 (R/R >= 1:1.3)
     tp1_min = sl_k * MIN_RR_TP1
     tp1_max = max_m * 1.5
     tp1_k = max(tp1_min, min(abs(giris_f - tp1_f), tp1_max))
 
+    # TP2: TP1'in en az %20 ustu
     tp2_min = tp1_k * 1.2
     tp2_max = max_m * 2.0
     tp2_k = max(tp2_min, min(abs(giris_f - tp2_f), tp2_max))
@@ -300,9 +293,9 @@ Her grafigin USTUNDE numara, rol ve ATR degeri YAZIYOR. Once bunlari oku.
 - GUNCEL FIYAT: {fiyat}
 - H1  ATR (50-medyan): {atr_h1} puan
 - M30 ATR (50-medyan): {atr_m30} puan
-- M15 ATR (50-medyan): {atr_m15} puan
-- M1  ATR (50-medyan): {atr_m1} puan  (SL/TP hesabinda bu kullanilir)
-- SL mesafesi M1 ATR'nin 1x - 2.5x arasi olmali ({min_sl} - {max_sl} puan)
+- M15 ATR (50-medyan): {atr_m15} puan  (SL/TP bu ATR uzerinden olceklenir)
+- M1  ATR (50-medyan): {atr_m1} puan
+- SL mesafesi M15 ATR'nin 1x - 2x arasi olacak ({min_sl} - {max_sl} puan)
 
 === CRASH/BOOM DAVRANISI (ONEMLI) ===
 - Crash sembolleri ANI DUSUS spike'lari atar (asagi)  -> SHORT bias
@@ -313,8 +306,8 @@ Her grafigin USTUNDE numara, rol ve ATR degeri YAZIYOR. Once bunlari oku.
 === KARAR KURALLARI ===
 1. H1, M30, M15 CELISIYORSA -> 'yon' = 'BEKLE'
 2. Guven %65 altindaysa -> 'BEKLE'
-3. Giris noktasi GUNCEL FIYAT'a cok yakin olmali (en fazla M1 ATR kadar uzak)
-4. SL mesafesi yukaridaki aralikta olmali
+3. Giris noktasi GUNCEL FIYAT'a cok yakin olmali (en fazla M15 ATR kadar uzak)
+4. SL mesafesi M15 ATR'nin 1x - 2x arasinda olmali
 5. TP1 mesafesi SL'nin EN AZ 1.3 kati olmali (R/R 1:1.3)
 6. TP2 mesafesi TP1'in EN AZ %20 ustunde olmali
 7. Guven degisken ver (%50, %65, %75, %85, %95) - hep ayni verme
@@ -519,8 +512,8 @@ def gemini_istek_at(url, payload, headers):
 
 def analyze_chart(image_bytes, cid, symbol, isim, fiyat, atr_h1, atr_m30, atr_m15, atr_m1):
     print(f"Analiz: {isim} (4 TF)", flush=True)
-    min_sl = round(atr_m1 * MIN_ATR_CARPAN, 2)
-    max_sl = round(atr_m1 * MAX_ATR_CARPAN, 2)
+    min_sl = round(atr_m15 * MIN_ATR_CARPAN, 2)
+    max_sl = round(atr_m15 * MAX_ATR_CARPAN, 2)
     prompt_text = PROMPT_TEMPLATE.format(
         sembol=isim, fiyat=fiyat,
         atr_h1=atr_h1, atr_m30=atr_m30, atr_m15=atr_m15, atr_m1=atr_m1,
@@ -715,7 +708,7 @@ def _menu_text():
     return ("🤖 *DERIV SENTETIK ANALIZ BOTU*\n\n"
             "📊 Analiz için bir sembol seç:\n"
             "• Bot H1 + M30 + M15 + M1 grafiklerini çeker\n"
-            "• 4 TF için ATR hesaplar (medyan)\n"
+            "• SL/TP M15 ATR üzerinden hesaplanır\n"
             "• Gemini ile analiz eder\n\n"
             "⬇️ Sembol seç:")
 
@@ -768,8 +761,8 @@ def show_yardim(cid, mid=None):
             "• 2) M30 → ANA TREND (turuncu)\n"
             "• 3) M15 → ORTA VADE (yesil)\n"
             "• 4) M1  → GIRIS ZAMANI (kirmizi)\n\n"
-            "⚙️ *ATR:* 50 mum medyanı (spike'a dayanıklı)\n"
-            "📏 *SL:* M1 ATR × 1-2.5\n"
+            "⚙️ *ATR:* 50 mum medyanı\n"
+            "📏 *SL/TP:* M15 ATR × 1-2\n"
             "🎯 *TP1:* min SL × 1.3 (R/R ≥ 1:1.3)\n\n"
             "⚠️ Yatırım tavsiyesi değildir.")
     if mid: edit_message_text(cid, mid, text, "Markdown", _ana_menu_buton())
@@ -779,7 +772,7 @@ def show_yardim(cid, mid=None):
 # DEBUG
 # ==========================================
 def debug_deriv(cid):
-    lines = ["🔧 *DERIV DEBUG v5*", ""]
+    lines = ["🔧 *DERIV DEBUG v6*", ""]
     lines.append("1️⃣ Endpoint testi...")
     basarili = None
     for ep in DERIV_ENDPOINTS:
@@ -946,7 +939,8 @@ def process_analysis(cid, symbol):
                     tp2 = str(t1 + abs(g - t1) * 0.3) if a["yon"] == "LONG" else str(t1 - abs(g - t1) * 0.3)
                 except: tp2 = tp1
 
-            h = kirp_sl_tp(symbol, fiyat, gemini_sl, tp1, tp2)
+            # YENI: M15 ATR bazli SL/TP
+            h = kirp_sl_tp(symbol, fiyat, gemini_sl, tp1, tp2, atr_m15)
             if h:
                 if a["yon"] == "SHORT":
                     sl = fiyat + h["sl_mesafe"]
@@ -988,7 +982,7 @@ def process_analysis(cid, symbol):
 def main():
     threading.Thread(target=run_health_server, daemon=True).start()
     init_db()
-    print(f"=== DERIV BOT v5 (4 TF + MEDYAN ATR) BASLADI (ID: {ADMIN_ID}) ===", flush=True)
+    print(f"=== DERIV BOT v6 (4 TF + M15 ATR SL/TP) BASLADI (ID: {ADMIN_ID}) ===", flush=True)
     offset = get_offset()
 
     while True:
