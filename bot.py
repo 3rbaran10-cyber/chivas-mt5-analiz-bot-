@@ -1,6 +1,6 @@
 import os
 import io, json, base64, time, math, requests, threading, re, sqlite3, ssl, warnings
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import websocket
@@ -27,7 +27,7 @@ MIN_ISTEK_ARASI = 3.0
 ADMIN_ID = 5504006147
 
 # ==========================================
-# DERIV (YENI PUBLIC API)
+# DERIV
 # ==========================================
 DERIV_ENDPOINTS = [
     "wss://api.derivws.com/trading/v1/options/ws/public",
@@ -43,10 +43,13 @@ SYMBOLS = [
 ]
 SYMBOL_MAP = {kod: isim for isim, kod in SYMBOLS}
 
-TF_M30, TF_M15, TF_M1 = 1800, 900, 60
-ATR_PERIOD = 14
+# Zaman dilimleri
+TF_H1, TF_M30, TF_M15, TF_M1 = 3600, 1800, 900, 60
+GRAFIK_MUM_SAYISI = 100
+ATR_PERIOD = 50
 VARSAYILAN_ATR = 50
-MIN_ATR_CARPAN, MAX_ATR_CARPAN = 1.0, 3.0
+MIN_ATR_CARPAN, MAX_ATR_CARPAN = 1.0, 2.5
+MIN_RR_TP1 = 1.3
 
 _ATR_CACHE, _ATR_CACHE_TTL = {}, 60
 _CANDLE_CACHE, _CANDLE_CACHE_TTL = {}, 30
@@ -73,8 +76,7 @@ def _tek_deneme(endpoint, payload, timeout=30):
     ws = None
     try:
         ws = websocket.create_connection(
-            endpoint,
-            timeout=timeout,
+            endpoint, timeout=timeout,
             sslopt={"cert_reqs": ssl.CERT_NONE},
             enable_multithread=True,
             skip_utf8_validation=True,
@@ -86,8 +88,7 @@ def _tek_deneme(endpoint, payload, timeout=30):
                 raw = ws.recv()
             except Exception:
                 break
-            if not raw:
-                break
+            if not raw: break
             try:
                 msg = json.loads(raw)
             except Exception:
@@ -99,7 +100,7 @@ def _tek_deneme(endpoint, payload, timeout=30):
                 return msg
         return None
     except Exception as e:
-        print(f"Deriv baglanti hatasi: {str(e)[:150]}", flush=True)
+        print(f"Deriv hatasi: {str(e)[:150]}", flush=True)
         return None
     finally:
         if ws:
@@ -109,12 +110,10 @@ def _tek_deneme(endpoint, payload, timeout=30):
 def deriv_call(payload, timeout=30):
     with _deriv_lock:
         for endpoint in DERIV_ENDPOINTS:
-            print(f"Deneniyor: {endpoint}", flush=True)
             r = _tek_deneme(endpoint, payload, timeout)
             if r is not None:
-                print(f"✅ Deriv endpoint OK: {endpoint}", flush=True)
                 return r
-        print("❌ Hiçbir Deriv endpoint'i çalışmadı.", flush=True)
+        print("❌ Deriv endpoint çalışmadı.", flush=True)
         return None
 
 def get_candles(symbol, granularity, count=100):
@@ -142,7 +141,8 @@ def get_current_price(symbol):
     prices = (resp.get("history") or {}).get("prices") or []
     return float(prices[-1]) if prices else None
 
-def calculate_atr(candles, period=14):
+def calculate_atr(candles, period=50):
+    """Medyan bazli ATR - spike'lara dayanikli."""
     if not candles or len(candles) < 2: return None
     trs = []
     for i in range(1, len(candles)):
@@ -151,14 +151,18 @@ def calculate_atr(candles, period=14):
         trs.append(max(h - l, abs(h - pc), abs(l - pc)))
     if not trs: return None
     n = min(period, len(trs))
-    return round(sum(trs[-n:]) / n, 4)
+    son = sorted(trs[-n:])
+    mid = len(son) // 2
+    medyan = (son[mid] + son[mid-1]) / 2 if len(son) % 2 == 0 else son[mid]
+    return round(medyan, 4)
 
 def resolve_atr(symbol):
+    """M1 ATR (SL/TP icin)."""
     now = time.time()
     cached = _ATR_CACHE.get(symbol)
     if cached and (now - cached[1]) < _ATR_CACHE_TTL:
         return cached[0]
-    candles = get_candles(symbol, TF_M1, ATR_PERIOD + 5)
+    candles = get_candles(symbol, TF_M1, ATR_PERIOD + 10)
     atr = calculate_atr(candles, ATR_PERIOD) if candles else None
     if atr and atr > 0:
         _ATR_CACHE[symbol] = (atr, now)
@@ -166,50 +170,82 @@ def resolve_atr(symbol):
     return VARSAYILAN_ATR
 
 # ==========================================
-# GRAFIK
+# GRAFIK - 4 TF RENKLI + NUMARALI
 # ==========================================
 _plot_lock = threading.Lock()
 
-def _ciz_candles(ax, candles, baslik):
+def _ciz_candles(ax, candles):
     if not candles:
-        ax.set_title(f"{baslik} (veri yok)"); return
+        ax.text(0.5, 0.5, "veri yok", ha='center', va='center',
+                transform=ax.transAxes, fontsize=12)
+        return
     for i, c in enumerate(candles):
         try:
             o = float(c['open']); h = float(c['high'])
             l = float(c['low']);  cl = float(c['close'])
         except: continue
-        renk = 'green' if cl >= o else 'red'
+        renk = '#26a69a' if cl >= o else '#ef5350'
         ax.plot([i, i], [l, h], color=renk, linewidth=0.7)
         alt = min(o, cl)
         yuk = abs(cl - o) if cl != o else (h - l) * 0.01
         ax.add_patch(Rectangle((i - 0.3, alt), 0.6, yuk,
                                 facecolor=renk, edgecolor=renk))
-    ax.set_title(baslik, fontsize=13, fontweight='bold')
-    ax.grid(True, alpha=0.3)
+    ax.grid(True, alpha=0.3, linestyle='--')
     ax.set_xlim(-1, len(candles))
+    ax.tick_params(labelsize=8)
 
-def draw_chart_3tf(symbol, isim, fiyat, atr_m1, atr_m15, atr_m30):
-    m30 = get_candles(symbol, TF_M30, 60)
-    m15 = get_candles(symbol, TF_M15, 60)
-    m1  = get_candles(symbol, TF_M1,  60)
-    if not m1: return None
+def draw_chart_4tf(symbol, isim, fiyat, atr_h1, atr_m30, atr_m15, atr_m1):
+    """H1 | M30 | M15 | M1 - renkli, numarali, etiketli 4'lu grafik."""
+    h1  = get_candles(symbol, TF_H1,  GRAFIK_MUM_SAYISI)
+    m30 = get_candles(symbol, TF_M30, GRAFIK_MUM_SAYISI)
+    m15 = get_candles(symbol, TF_M15, GRAFIK_MUM_SAYISI)
+    m1  = get_candles(symbol, TF_M1,  GRAFIK_MUM_SAYISI)
+
+    if not m1:
+        return None
 
     with _plot_lock:
-        fig, axes = plt.subplots(1, 3, figsize=(20, 7))
-        fig.suptitle(f"{isim}  |  Guncel Fiyat: {fiyat}  |  M1 ATR: {atr_m1}",
-                     fontsize=15, fontweight='bold')
-        _ciz_candles(axes[0], m30, f"M30  (ATR: {atr_m30})")
-        _ciz_candles(axes[1], m15, f"M15  (ATR: {atr_m15})")
-        _ciz_candles(axes[2], m1,  f"M1  (ATR: {atr_m1})")
-        plt.tight_layout(rect=[0, 0, 1, 0.95])
+        fig, axes = plt.subplots(1, 4, figsize=(26, 7))
+        fig.patch.set_facecolor('white')
+
+        fig.suptitle(
+            f"{isim}   |   GUNCEL FIYAT: {fiyat}   |   M1 ATR: {atr_m1}",
+            fontsize=17, fontweight='bold', y=0.985
+        )
+
+        tf_bilgileri = [
+            (axes[0], h1,  "1) H1",  "MAKRO TREND",   atr_h1,  "#1f77b4"),
+            (axes[1], m30, "2) M30", "ANA TREND",     atr_m30, "#ff7f0e"),
+            (axes[2], m15, "3) M15", "ORTA VADE",     atr_m15, "#2ca02c"),
+            (axes[3], m1,  "4) M1",  "GIRIS ZAMANI",  atr_m1,  "#d62728"),
+        ]
+
+        for ax, candles, numara, rol, atr, renk in tf_bilgileri:
+            _ciz_candles(ax, candles)
+            baslik = f"{numara}  {rol}\nATR: {atr}"
+            ax.set_title(baslik, fontsize=13, fontweight='bold',
+                         color=renk, pad=12)
+            for spine in ax.spines.values():
+                spine.set_edgecolor(renk)
+                spine.set_linewidth(3)
+            ax.set_facecolor('#fafafa')
+
+        fig.text(0.5, 0.015,
+                 "1 = H1 (Makro Trend)      |      2 = M30 (Ana Trend)      |      "
+                 "3 = M15 (Orta Vade)      |      4 = M1 (Giris Zamani)",
+                 ha='center', fontsize=12, style='italic',
+                 color='#222222', fontweight='bold')
+
+        plt.tight_layout(rect=[0, 0.05, 1, 0.94])
         buf = io.BytesIO()
-        plt.savefig(buf, format="PNG", dpi=100, bbox_inches='tight')
+        plt.savefig(buf, format="PNG", dpi=90, bbox_inches='tight',
+                    facecolor='white')
         plt.close(fig)
         buf.seek(0)
         return buf.getvalue()
 
 # ==========================================
-# KIRPMA
+# KIRPMA (SL/TP)
 # ==========================================
 def kirp_sl_tp(symbol, giris, gemini_sl, gemini_tp1, gemini_tp2):
     try:
@@ -218,12 +254,21 @@ def kirp_sl_tp(symbol, giris, gemini_sl, gemini_tp1, gemini_tp2):
         tp1_f   = float(str(gemini_tp1).replace(",", "."))
         tp2_f   = float(str(gemini_tp2).replace(",", "."))
     except: return None
+
     atr = resolve_atr(symbol)
     min_m = atr * MIN_ATR_CARPAN
     max_m = atr * MAX_ATR_CARPAN
-    sl_k  = max(min_m, min(abs(giris_f - sl_f),  max_m))
-    tp1_k = max(min_m, min(abs(giris_f - tp1_f), max_m))
-    tp2_k = max(min_m, min(abs(giris_f - tp2_f), max_m * 1.5))
+
+    sl_k = max(min_m, min(abs(giris_f - sl_f), max_m))
+
+    tp1_min = sl_k * MIN_RR_TP1
+    tp1_max = max_m * 1.5
+    tp1_k = max(tp1_min, min(abs(giris_f - tp1_f), tp1_max))
+
+    tp2_min = tp1_k * 1.2
+    tp2_max = max_m * 2.0
+    tp2_k = max(tp2_min, min(abs(giris_f - tp2_f), tp2_max))
+
     return {"giris": round(giris_f, 4), "atr": atr,
             "sl_mesafe": round(sl_k, 4),
             "tp1_mesafe": round(tp1_k, 4),
@@ -232,47 +277,80 @@ def kirp_sl_tp(symbol, giris, gemini_sl, gemini_tp1, gemini_tp2):
 # ==========================================
 # PROMPT
 # ==========================================
-PROMPT_TEMPLATE = """Sen dunyanin en iyi {sembol} analiz uzmanisin. 15+ yillik deneyimli profesyonelsin. Smart Money konseptlerini (ICT) derinlesine bilirsin.
+PROMPT_TEMPLATE = """Sen dunyanin en iyi {sembol} analiz uzmanisin. 15+ yillik deneyimli profesyonelsin. Smart Money konseptlerini (ICT) derinlemesine bilirsin.
 
-Sana {sembol} icin UC ayri grafik yan yana gonderiliyor: SOL = M30, ORTA = M15, SAG = M1.
+=== GORSEL ACIKLAMASI (ONCE BUNU OKU) ===
+Sana {sembol} icin TEK bir gorsel gonderiliyor.
+Bu gorsel 4 PARCAYA BOLUNMUS, soldan saga 4 grafik var:
 
-CANLI VERILER:
+  [1] EN SOLDA:  H1  (1 SAATLIK)  - MAVI cerceveli    - MAKRO TREND
+  [2] 2. SIRADA: M30 (30 DAKIKA)  - TURUNCU cerceveli - ANA TREND
+  [3] 3. SIRADA: M15 (15 DAKIKA)  - YESIL cerceveli   - ORTA VADE
+  [4] EN SAGDA:  M1  (1 DAKIKA)   - KIRMIZI cerceveli - GIRIS ZAMANI
+
+Her grafigin USTUNDE numara, rol ve ATR degeri YAZIYOR. Once bunlari oku.
+
+=== ANALIZ SIRASI (BOYLE DUSUN) ===
+1. H1  -> Makro trend nedir? (Yukari / Asagi / Yatay)
+2. M30 -> Ana trend H1'i onayliyor mu?
+3. M15 -> Orta vade yapi nasil? Giris bolgesi var mi?
+4. M1  -> KESIN giris zamani bu mu? Mum formasyonu ne diyor?
+
+=== CANLI VERILER ===
 - GUNCEL FIYAT: {fiyat}
-- M1 ATR (14): {atr} puan
-- M15 ATR (14): {atr_m15} puan
-- M30 ATR (14): {atr_m30} puan
+- H1  ATR (50-medyan): {atr_h1} puan
+- M30 ATR (50-medyan): {atr_m30} puan
+- M15 ATR (50-medyan): {atr_m15} puan
+- M1  ATR (50-medyan): {atr_m1} puan  (SL/TP hesabinda bu kullanilir)
+- SL mesafesi M1 ATR'nin 1x - 2.5x arasi olmali ({min_sl} - {max_sl} puan)
 
-ONEMLI - CRASH/BOOM DAVRANISI:
-- Crash sembolleri ANI DUSUS spike'lari atar (asagi)
-- Boom sembolleri ANI YUKSELIS spike'lari atar (yukari)
-- Bu bias'i kararinda dikkate al.
+=== CRASH/BOOM DAVRANISI (ONEMLI) ===
+- Crash sembolleri ANI DUSUS spike'lari atar (asagi)  -> SHORT bias
+- Boom sembolleri ANI YUKSELIS spike'lari atar (yukari) -> LONG bias
+- Bleed (yavas kayma) evresinde POZISYON ACILMAMALI
+- Spike SONRASI duzeltme evresinde giris yapilabilir
 
-GOREV:
-1. Uc grafigi birlikte degerlendir:
-   - M30 -> ana trend yonu
-   - M15 -> orta vade yapi
-   - M1  -> GIRIS icin TEK referans
-2. Giris noktasi GUNCEL FIYAT'a cok yakin olmali (en fazla 5-10 puan).
-3. SL mesafesi M1 ATR'nin 1x - 3x arasi olmali ({min_sl} - {max_sl} puan).
+=== KARAR KURALLARI ===
+1. H1, M30, M15 CELISIYORSA -> 'yon' = 'BEKLE'
+2. Guven %65 altindaysa -> 'BEKLE'
+3. Giris noktasi GUNCEL FIYAT'a cok yakin olmali (en fazla M1 ATR kadar uzak)
+4. SL mesafesi yukaridaki aralikta olmali
+5. TP1 mesafesi SL'nin EN AZ 1.3 kati olmali (R/R 1:1.3)
+6. TP2 mesafesi TP1'in EN AZ %20 ustunde olmali
+7. Guven degisken ver (%50, %65, %75, %85, %95) - hep ayni verme
 
-KARAR KURALLARI:
-1. Guven %65 altindaysa 'yon' = 'BEKLE'.
-2. M30 ve M15 celisiyorsa -> guven dusur veya 'BEKLE'.
-3. Guven degisken ver (%50, %65, %75, %85, %95).
+=== CIKTI FORMATI ===
+- SADECE gecerli JSON dondur. Aciklama yazma.
+- Sayilarda NOKTA kullan (virgul degil).
+- Turkce yaz.
+- "giris", "stop_loss" alanlari STRING olsun.
+- "take_profit" alani IKI elemanli array olsun: [tp1, tp2]
 
-MUM SAYISI: M1'de 1-3 mum.
-FORMAT: SADECE gecerli JSON. Sayilarda NOKTA kullan. Turkce yaz.
-
-JSON SEMASI:
-- sembol, yon ("LONG"|"SHORT"|"BEKLE"), guven (0-100)
+=== JSON SEMASI ===
+- sembol (string)
+- yon ("LONG" | "SHORT" | "BEKLE")
+- guven (integer 0-100)
 - giris (string)
 - stop_loss (string)
-- take_profit (array, [tp1, tp2])
-- trend_m1, vwap_durumu, fvg_tespit, likidite_durumu
-- destekler (array), direncler (array), formasyonlar (array)
+- take_profit (array, 2 eleman)
+- trend_h1 (string)
+- trend_m30 (string)
+- trend_m15 (string)
+- trend_m1 (string)
+- vwap_durumu (string)
+- fvg_tespit (string)
+- likidite_durumu (string)
+- destekler (array)
+- direncler (array)
+- formasyonlar (array)
 - kullanilan_teknikler (array)
-- kisa_analiz, gerekce
-- kalan_mum (1-3), mum_yonu, hareket_aciklamasi, sonraki_hamle, uyari
+- kisa_analiz (string, 2-3 cumle)
+- gerekce (string)
+- kalan_mum (integer 1-3)
+- mum_yonu (string)
+- hareket_aciklamasi (string)
+- sonraki_hamle (string)
+- uyari (string)
 """
 
 # ==========================================
@@ -439,19 +517,19 @@ def gemini_istek_at(url, payload, headers):
         SON_ISTEK_ZAMANI[0] = time.time()
         return resp
 
-def analyze_chart(image_bytes, cid, symbol, isim, fiyat, atr_m1, atr_m15, atr_m30):
-    print(f"Analiz: {isim}", flush=True)
+def analyze_chart(image_bytes, cid, symbol, isim, fiyat, atr_h1, atr_m30, atr_m15, atr_m1):
+    print(f"Analiz: {isim} (4 TF)", flush=True)
     min_sl = round(atr_m1 * MIN_ATR_CARPAN, 2)
     max_sl = round(atr_m1 * MAX_ATR_CARPAN, 2)
     prompt_text = PROMPT_TEMPLATE.format(
-        sembol=isim, fiyat=fiyat, atr=atr_m1,
-        atr_m15=atr_m15, atr_m30=atr_m30,
+        sembol=isim, fiyat=fiyat,
+        atr_h1=atr_h1, atr_m30=atr_m30, atr_m15=atr_m15, atr_m1=atr_m1,
         min_sl=min_sl, max_sl=max_sl)
 
     img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-    img.thumbnail((1600, 1600))
+    img.thumbnail((1920, 1920))
     buf = io.BytesIO()
-    img.save(buf, format="JPEG", quality=92)
+    img.save(buf, format="JPEG", quality=90)
     b64 = base64.b64encode(buf.getvalue()).decode()
     del img, buf
 
@@ -473,6 +551,9 @@ def analyze_chart(image_bytes, cid, symbol, isim, fiyat, atr_m1, atr_m15, atr_m3
                     "giris": {"type": "string"},
                     "stop_loss": {"type": "string"},
                     "take_profit": {"type": "array", "items": {"type": "string"}},
+                    "trend_h1": {"type": "string"},
+                    "trend_m30": {"type": "string"},
+                    "trend_m15": {"type": "string"},
                     "trend_m1": {"type": "string"},
                     "vwap_durumu": {"type": "string"},
                     "fvg_tespit": {"type": "string"},
@@ -578,25 +659,35 @@ def build_card(a, isim):
     else:
         t.append("║  ⏸️  Sinyal yok")
         if a.get("uyari"): t.append(f"║  ⚠️  {str(a['uyari'])[:38]}")
-    t += ["╚══════════════════════════╝", "", "📈 TREND ANALİZİ",
-          f"• M1: {a.get('trend_m1','?')}"]
+    t += ["╚══════════════════════════╝", "", "📈 TREND ANALİZİ"]
+
+    for tf, key in [("H1", "trend_h1"), ("M30", "trend_m30"),
+                    ("M15", "trend_m15"), ("M1", "trend_m1")]:
+        if a.get(key): t.append(f"• {tf}: {a[key]}")
+
     if a.get("vwap_durumu"): t.append(f"• VWAP: {a['vwap_durumu']}")
+
     t += ["", "🎯 SEVİYELER",
           f"🟢 Destek: {', '.join(map(str, a.get('destekler',[]))) or 'Belirsiz'}",
           f"🔴 Direnç: {', '.join(map(str, a.get('direncler',[]))) or 'Belirsiz'}"]
+
     fvg = a.get("fvg_tespit", ""); lik = a.get("likidite_durumu", "")
     sm = []
     if fvg and fvg.lower() not in ["yok", "belirsiz", ""]: sm.append(f"📦 FVG: {fvg}")
     if lik and lik.lower() not in ["yok", "belirsiz", ""]: sm.append(f"💧 Likidite: {lik}")
     if sm: t += ["", "🧠 SMART MONEY"] + sm
+
     if a.get("formasyonlar"):
         t += ["", f"🧩 Formasyon: {', '.join(map(str, a['formasyonlar']))}"]
+
     if a.get("hareket_aciklamasi"):
         t += ["", "⏱️ MUM TAHMİNİ", f"• {a['hareket_aciklamasi']}"]
         if a.get("sonraki_hamle"): t.append(f"• Sonrası: {a['sonraki_hamle']}")
+
     t += ["", "📝 ÖZET", a.get('kisa_analiz', ''), "", "🔍 GEREKÇELER"]
     for g in str(a.get("gerekce", "")).replace("\\n", "\n").split("\n"):
         if g.strip(): t.append(f"• {g.strip()}")
+
     t += ["", f"⚠️ {a.get('uyari','Yatırım tavsiyesi değildir.')}"]
     return "\n".join(t)
 
@@ -623,8 +714,8 @@ def _menu_keyboard():
 def _menu_text():
     return ("🤖 *DERIV SENTETIK ANALIZ BOTU*\n\n"
             "📊 Analiz için bir sembol seç:\n"
-            "• Bot M30 + M15 + M1 grafiğini çeker\n"
-            "• ATR hesaplar\n"
+            "• Bot H1 + M30 + M15 + M1 grafiklerini çeker\n"
+            "• 4 TF için ATR hesaplar (medyan)\n"
             "• Gemini ile analiz eder\n\n"
             "⬇️ Sembol seç:")
 
@@ -671,11 +762,15 @@ def show_istatistik(cid, mid=None):
 
 def show_yardim(cid, mid=None):
     text = ("❓ *YARDIM*\n\n"
-            "📊 Analiz için /menu → sembol butonuna bas.\n\n"
-            "📋 Semboller:\n"
-            "• Crash 600 / 900 / 1000\n"
-            "• Boom 600 / 900 / 1000\n\n"
-            "🔧 Sorun yaşarsan /debug yaz.\n\n"
+            "📊 Analiz: /menu → sembol butonuna bas\n\n"
+            "📋 *4 Zaman Dilimi*\n"
+            "• 1) H1  → MAKRO TREND (mavi)\n"
+            "• 2) M30 → ANA TREND (turuncu)\n"
+            "• 3) M15 → ORTA VADE (yesil)\n"
+            "• 4) M1  → GIRIS ZAMANI (kirmizi)\n\n"
+            "⚙️ *ATR:* 50 mum medyanı (spike'a dayanıklı)\n"
+            "📏 *SL:* M1 ATR × 1-2.5\n"
+            "🎯 *TP1:* min SL × 1.3 (R/R ≥ 1:1.3)\n\n"
             "⚠️ Yatırım tavsiyesi değildir.")
     if mid: edit_message_text(cid, mid, text, "Markdown", _ana_menu_buton())
     else: send_msg(cid, text, "Markdown", _ana_menu_buton())
@@ -684,59 +779,54 @@ def show_yardim(cid, mid=None):
 # DEBUG
 # ==========================================
 def debug_deriv(cid):
-    lines = ["🔧 *DERIV DEBUG v3*", ""]
-    lines.append("1️⃣ Yeni public endpoint test ediliyor...")
-    lines.append("")
-
+    lines = ["🔧 *DERIV DEBUG v5*", ""]
+    lines.append("1️⃣ Endpoint testi...")
     basarili = None
     for ep in DERIV_ENDPOINTS:
         try:
-            ws = websocket.create_connection(
-                ep, timeout=15,
+            ws = websocket.create_connection(ep, timeout=15,
                 sslopt={"cert_reqs": ssl.CERT_NONE},
-                skip_utf8_validation=True,
-            )
+                skip_utf8_validation=True)
             basarili = ep
             try: ws.close()
             except: pass
             break
         except Exception as e:
-            lines.append(f"❌ `{ep[:60]}...`")
-            lines.append(f"   `{str(e)[:120]}`")
-            lines.append("")
-
+            lines.append(f"❌ `{str(e)[:100]}`")
     if not basarili:
-        lines.append("🔴 Hiçbir endpoint açılmadı.")
+        lines.append("🔴 Bağlantı yok")
         send_msg(cid, "\n".join(lines), "Markdown")
         return
-
-    lines.append(f"✅ Bağlantı OK")
-    lines.append(f"   `{basarili[:60]}...`")
+    lines.append(f"✅ `{basarili[:55]}`")
     lines.append("")
 
-    lines.append("2️⃣ active_symbols testi...")
+    lines.append("2️⃣ Sembol listesi...")
     resp = deriv_call({"active_symbols": "brief", "product_type": "basic", "req_id": 999})
     if not resp:
-        lines.append("❌ active_symbols alınamadı.")
+        lines.append("❌ Alınamadı")
         send_msg(cid, "\n".join(lines), "Markdown")
         return
-
     all_s = resp.get("active_symbols", [])
-    lines.append(f"✅ Toplam *{len(all_s)}* sembol")
+    lines.append(f"✅ {len(all_s)} sembol")
     lines.append("")
-    lines.append("3️⃣ Crash/Boom sembolleri:")
+    lines.append("3️⃣ Crash/Boom:")
     cb = [s for s in all_s if "Crash" in s.get("display_name","") or "Boom" in s.get("display_name","")]
-    if not cb:
-        lines.append("❌ Hiç yok!")
-    else:
-        for s in cb:
-            lines.append(f"• `{s['symbol']}` → {s['display_name']}")
+    for s in cb:
+        lines.append(f"• `{s['symbol']}` → {s['display_name']}")
 
     lines.append("")
-    lines.append("4️⃣ Canlı fiyat testi (CRASH1000):")
+    lines.append("4️⃣ CRASH1000 - Fiyat + 4 TF ATR:")
     f = get_current_price("CRASH1000")
     if f: lines.append(f"✅ Fiyat: `{f}`")
-    else: lines.append("❌ Fiyat alınamadı")
+    else: lines.append("❌ Fiyat yok")
+
+    for tf_name, tf_val in [("H1", TF_H1), ("M30", TF_M30), ("M15", TF_M15), ("M1", TF_M1)]:
+        c = get_candles("CRASH1000", tf_val, ATR_PERIOD + 10)
+        if c:
+            a = calculate_atr(c, ATR_PERIOD)
+            lines.append(f"✅ {tf_name} ATR: `{a}`")
+        else:
+            lines.append(f"❌ {tf_name} mum yok")
 
     send_msg(cid, "\n".join(lines), "Markdown")
 
@@ -808,30 +898,36 @@ def handle_callback(cq):
 # ==========================================
 def process_analysis(cid, symbol):
     isim = SYMBOL_MAP[symbol]
-    send_msg(cid, f"⏳ *{isim}* analiz ediliyor...\nM30 + M15 + M1 çekiliyor...", "Markdown")
+    send_msg(cid, f"⏳ *{isim}* analiz ediliyor...\n"
+                  f"H1 + M30 + M15 + M1 çekiliyor...", "Markdown")
 
     fiyat = get_current_price(symbol)
     if not fiyat:
-        send_msg(cid, f"❌ {isim} için anlık fiyat alınamadı.\n`/debug` yaz.", "Markdown")
+        send_msg(cid, f"❌ {isim} için fiyat alınamadı.\n`/debug` yaz.", "Markdown")
         return
 
-    m1  = get_candles(symbol, TF_M1,  100)
-    m15 = get_candles(symbol, TF_M15, 100)
-    m30 = get_candles(symbol, TF_M30, 100)
+    h1  = get_candles(symbol, TF_H1,  GRAFIK_MUM_SAYISI)
+    m30 = get_candles(symbol, TF_M30, GRAFIK_MUM_SAYISI)
+    m15 = get_candles(symbol, TF_M15, GRAFIK_MUM_SAYISI)
+    m1  = get_candles(symbol, TF_M1,  GRAFIK_MUM_SAYISI)
+
     if not m1:
         send_msg(cid, f"❌ {isim} için mum verisi alınamadı.")
         return
 
-    atr_m1  = calculate_atr(m1,  ATR_PERIOD) or VARSAYILAN_ATR
-    atr_m15 = calculate_atr(m15, ATR_PERIOD) or VARSAYILAN_ATR
+    atr_h1  = calculate_atr(h1,  ATR_PERIOD) or VARSAYILAN_ATR
     atr_m30 = calculate_atr(m30, ATR_PERIOD) or VARSAYILAN_ATR
-    print(f"{isim} | fiyat={fiyat} | ATR M1={atr_m1} M15={atr_m15} M30={atr_m30}", flush=True)
+    atr_m15 = calculate_atr(m15, ATR_PERIOD) or VARSAYILAN_ATR
+    atr_m1  = calculate_atr(m1,  ATR_PERIOD) or VARSAYILAN_ATR
 
-    png = draw_chart_3tf(symbol, isim, fiyat, atr_m1, atr_m15, atr_m30)
+    print(f"{isim} | fiyat={fiyat} | ATR H1={atr_h1} M30={atr_m30} M15={atr_m15} M1={atr_m1}", flush=True)
+
+    png = draw_chart_4tf(symbol, isim, fiyat, atr_h1, atr_m30, atr_m15, atr_m1)
     if not png:
         send_msg(cid, f"❌ Grafik çizilemedi."); return
 
-    a = analyze_chart(png, cid, symbol, isim, fiyat, atr_m1, atr_m15, atr_m30)
+    a = analyze_chart(png, cid, symbol, isim, fiyat,
+                      atr_h1, atr_m30, atr_m15, atr_m1)
     if not a:
         send_msg(cid, "❌ Analiz başarısız."); return
 
@@ -847,7 +943,7 @@ def process_analysis(cid, symbol):
                 try:
                     g = float(str(fiyat))
                     t1 = float(str(tp1).replace(",", "."))
-                    tp2 = str(t1 + abs(g - t1) * 0.2) if a["yon"] == "LONG" else str(t1 - abs(g - t1) * 0.2)
+                    tp2 = str(t1 + abs(g - t1) * 0.3) if a["yon"] == "LONG" else str(t1 - abs(g - t1) * 0.3)
                 except: tp2 = tp1
 
             h = kirp_sl_tp(symbol, fiyat, gemini_sl, tp1, tp2)
@@ -892,7 +988,7 @@ def process_analysis(cid, symbol):
 def main():
     threading.Thread(target=run_health_server, daemon=True).start()
     init_db()
-    print(f"=== DERIV BOT v4 (YENI API) BASLADI (ID: {ADMIN_ID}) ===", flush=True)
+    print(f"=== DERIV BOT v5 (4 TF + MEDYAN ATR) BASLADI (ID: {ADMIN_ID}) ===", flush=True)
     offset = get_offset()
 
     while True:
