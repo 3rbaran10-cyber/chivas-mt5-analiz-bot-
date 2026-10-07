@@ -27,27 +27,11 @@ MIN_ISTEK_ARASI = 3.0
 ADMIN_ID = 5504006147
 
 # ==========================================
-# DERIV
+# DERIV (YENİ API)
 # ==========================================
-DERIV_APP_ID = "1089"
-
-# Birden fazla endpoint dene
+DERIV_APP_ID = "1089"  # Artık kullanılmıyor ama kodda kalsın
 DERIV_ENDPOINTS = [
-    f"wss://ws.derivws.com/websockets/v3?app_id={DERIV_APP_ID}",
-    f"wss://green.derivws.com/websockets/v3?app_id={DERIV_APP_ID}",
-    f"wss://blue.derivws.com/websockets/v3?app_id={DERIV_APP_ID}",
-    f"wss://frontend.derivws.com/websockets/v3?app_id={DERIV_APP_ID}",
-    f"wss://ws.binaryws.com/websockets/v3?app_id=1",
-]
-
-# Tarayıcı gibi görünmek için header'lar
-BROWSER_HEADERS = [
-    "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Origin: https://app.deriv.com",
-    "Accept-Language: en-US,en;q=0.9",
-    "Accept-Encoding: gzip, deflate, br",
-    "Pragma: no-cache",
-    "Cache-Control: no-cache",
+    "wss://api.derivws.com/trading/v1/options/ws/public",
 ]
 
 SYMBOLS = [
@@ -82,20 +66,18 @@ def run_health_server():
     HTTPServer(("0.0.0.0", port), Health).serve_forever()
 
 # ==========================================
-# DERIV ISTEK - HEADER'LI + COKLU ENDPOINT
+# DERIV ISTEK (YENİ)
 # ==========================================
 _deriv_lock = threading.Lock()
-_calisan_endpoint = [None]  # Cache başarılı endpoint
 
-def _tek_deneme(endpoint, payload, timeout=25):
-    """Tek bir endpoint'e bağlan ve istek at."""
+def _tek_deneme(endpoint, payload, timeout=30):
+    """Yeni public endpoint'e bağlan ve istek at."""
     ws = None
     try:
         ws = websocket.create_connection(
             endpoint,
             timeout=timeout,
             sslopt={"cert_reqs": ssl.CERT_NONE},
-            header=BROWSER_HEADERS,
             enable_multithread=True,
             skip_utf8_validation=True,
         )
@@ -119,42 +101,23 @@ def _tek_deneme(endpoint, payload, timeout=25):
                 return msg
         return None
     except Exception as e:
-        raise e
+        print(f"Deriv baglanti hatasi: {str(e)[:150]}", flush=True)
+        return None
     finally:
         if ws:
             try: ws.close()
             except: pass
 
-def deriv_call(payload, timeout=25):
-    """Önce daha önce çalışan endpoint'i dene, olmazsa hepsini dene."""
-    req_id = payload.get("req_id", 1)
+def deriv_call(payload, timeout=30):
+    """Yeni public endpoint'e istek at."""
     with _deriv_lock:
-        # 1) Daha önce çalışan endpoint
-        if _calisan_endpoint[0]:
-            try:
-                r = _tek_deneme(_calisan_endpoint[0], payload, timeout)
-                if r is not None:
-                    return r
-            except Exception as e:
-                print(f"Calisan endpoint hata: {str(e)[:120]}", flush=True)
-                _calisan_endpoint[0] = None
-
-        # 2) Hepsini dene
         for endpoint in DERIV_ENDPOINTS:
-            for deneme in range(2):
-                try:
-                    r = _tek_deneme(endpoint, payload, timeout)
-                    if r is not None:
-                        _calisan_endpoint[0] = endpoint
-                        print(f"✅ Deriv endpoint OK: {endpoint[:50]}", flush=True)
-                        return r
-                except Exception as e:
-                    err = str(e)[:120]
-                    print(f"❌ {endpoint[:45]} (deneme {deneme+1}): {err}", flush=True)
-                    if "520" in err or "502" in err or "503" in err:
-                        # Cloudflare blok - bu endpoint'i atla
-                        break
-                    time.sleep(1)
+            print(f"Deneniyor: {endpoint}", flush=True)
+            r = _tek_deneme(endpoint, payload, timeout)
+            if r is not None:
+                print(f"✅ Deriv endpoint OK: {endpoint}", flush=True)
+                return r
+        print("❌ Hiçbir Deriv endpoint'i çalışmadı.", flush=True)
         return None
 
 def get_candles(symbol, granularity, count=100):
@@ -724,9 +687,8 @@ def show_yardim(cid, mid=None):
 # DEBUG
 # ==========================================
 def debug_deriv(cid):
-    lines = ["🔧 *DERIV DEBUG v2*", ""]
-    lines.append("1️⃣ Bağlantı test ediliyor...")
-    lines.append("(Tarayıcı header'lı, 5 endpoint denenecek)")
+    lines = ["🔧 *DERIV DEBUG v3*", ""]
+    lines.append("1️⃣ Yeni public endpoint test ediliyor...")
     lines.append("")
 
     basarili = None
@@ -735,7 +697,6 @@ def debug_deriv(cid):
             ws = websocket.create_connection(
                 ep, timeout=15,
                 sslopt={"cert_reqs": ssl.CERT_NONE},
-                header=BROWSER_HEADERS,
                 skip_utf8_validation=True,
             )
             basarili = ep
@@ -743,8 +704,8 @@ def debug_deriv(cid):
             except: pass
             break
         except Exception as e:
-            lines.append(f"❌ `{ep[:50]}...`")
-            lines.append(f"   `{str(e)[:100]}`")
+            lines.append(f"❌ `{ep[:60]}...`")
+            lines.append(f"   `{str(e)[:120]}`")
             lines.append("")
 
     if not basarili:
@@ -753,7 +714,7 @@ def debug_deriv(cid):
         return
 
     lines.append(f"✅ Bağlantı OK")
-    lines.append(f"   `{basarili[:55]}...`")
+    lines.append(f"   `{basarili[:60]}...`")
     lines.append("")
 
     # Sembol testi
@@ -935,7 +896,7 @@ def process_analysis(cid, symbol):
 def main():
     threading.Thread(target=run_health_server, daemon=True).start()
     init_db()
-    print(f"=== DERIV BOT v3 (header'li) BASLADI (ID: {ADMIN_ID}) ===", flush=True)
+    print(f"=== DERIV BOT v4 (YENI API) BASLADI (ID: {ADMIN_ID}) ===", flush=True)
     offset = get_offset()
 
     while True:
