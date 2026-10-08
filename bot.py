@@ -43,16 +43,17 @@ SYMBOLS = [
 ]
 SYMBOL_MAP = {kod: isim for isim, kod in SYMBOLS}
 
-# Zaman dilimleri
 TF_H1, TF_M30, TF_M15, TF_M5, TF_M1 = 3600, 1800, 900, 300, 60
 GRAFIK_MUM_SAYISI = 100
 ATR_PERIOD = 50
 VARSAYILAN_ATR = 50
 
-# ATR sadece GUVENLIK AGI (Gemini'nin dedigini koru)
-ATR_MIN_CARPAN = 1.0   # SL en az 1 x M5 ATR
-ATR_MAX_CARPAN = 6.0   # SL en fazla 6 x M5 ATR
-MIN_RR_TP1 = 1.2       # TP1 en az SL'nin 1.2 kati
+ATR_MIN_CARPAN = 1.0
+ATR_MAX_CARPAN = 6.0
+MIN_RR_TP1 = 1.2
+
+# YENI: Guven esigi 65 -> 75
+MIN_GUVEN = 75
 
 _ATR_CACHE, _ATR_CACHE_TTL = {}, 60
 _CANDLE_CACHE, _CANDLE_CACHE_TTL = {}, 30
@@ -145,7 +146,6 @@ def get_current_price(symbol):
     return float(prices[-1]) if prices else None
 
 def calculate_atr(candles, period=50):
-    """Medyan bazli ATR - spike'lara dayanikli."""
     if not candles or len(candles) < 2: return None
     trs = []
     for i in range(1, len(candles)):
@@ -160,7 +160,58 @@ def calculate_atr(candles, period=50):
     return round(medyan, 4)
 
 # ==========================================
-# GRAFIK - 4 TF RENKLI + NUMARALI
+# YENI: BLEED FILTRESI
+# ==========================================
+def bleed_kontrol(m1_candles, yon):
+    """
+    M1 bleed evresinde mi kontrol et.
+    Crash + SHORT: son 10 mumun 7+ tanesi yukari ise -> bleed -> BEKLE
+    Boom  + LONG:  son 10 mumun 7+ tanesi asagi ise -> bleed -> BEKLE
+    """
+    if not m1_candles or len(m1_candles) < 10:
+        return False, 0
+    son10 = m1_candles[-10:]
+    kapanislar = [float(c['close']) for c in son10]
+    yukari = sum(1 for i in range(1, len(kapanislar)) if kapanislar[i] > kapanislar[i-1])
+    asagi  = sum(1 for i in range(1, len(kapanislar)) if kapanislar[i] < kapanislar[i-1])
+
+    if yon == "SHORT" and yukari >= 7:
+        return True, yukari
+    if yon == "LONG" and asagi >= 7:
+        return True, asagi
+    return False, 0
+
+# ==========================================
+# YENI: SPIKE BILGISI
+# ==========================================
+def son_spike_bilgisi(m1_candles, yon):
+    """Son buyuk spike'tan bu yana kac mum gecti."""
+    try:
+        if not m1_candles or len(m1_candles) < 20:
+            return "bilinmiyor"
+        son = m1_candles[-100:] if len(m1_candles) >= 100 else m1_candles
+        degisimler = []
+        for c in son:
+            o = float(c['open']); cl = float(c['close'])
+            degisimler.append(cl - o)
+
+        if yon == "SHORT":
+            # Crash: en buyuk dusus nerede
+            idx = degisimler.index(min(degisimler))
+            mesafe = len(son) - 1 - idx
+            buyukluk = abs(min(degisimler))
+            return f"Son buyuk dusus {mesafe} mum once ({round(buyukluk, 2)} puan)."
+        else:
+            # Boom: en buyuk yukselis nerede
+            idx = degisimler.index(max(degisimler))
+            mesafe = len(son) - 1 - idx
+            buyukluk = max(degisimler)
+            return f"Son buyuk yukselis {mesafe} mum once ({round(buyukluk, 2)} puan)."
+    except:
+        return "bilinmiyor"
+
+# ==========================================
+# GRAFIK
 # ==========================================
 _plot_lock = threading.Lock()
 
@@ -185,7 +236,6 @@ def _ciz_candles(ax, candles):
     ax.tick_params(labelsize=8)
 
 def draw_chart_4tf(symbol, isim, fiyat, atr_h1, atr_m30, atr_m15, atr_m5, atr_m1):
-    """H1 | M30 | M15 | M1 - 4 grafik, M5 ATR ustte gosterilir."""
     h1  = get_candles(symbol, TF_H1,  GRAFIK_MUM_SAYISI)
     m30 = get_candles(symbol, TF_M30, GRAFIK_MUM_SAYISI)
     m15 = get_candles(symbol, TF_M15, GRAFIK_MUM_SAYISI)
@@ -235,16 +285,9 @@ def draw_chart_4tf(symbol, isim, fiyat, atr_h1, atr_m30, atr_m15, atr_m5, atr_m1
         return buf.getvalue()
 
 # ==========================================
-# KIRPMA (SL/TP) - GEMINI ONCELIKLI, M5 ATR GUVENLIK
+# KIRPMA (SL/TP)
 # ==========================================
 def kirp_sl_tp(symbol, giris, gemini_sl, gemini_tp1, gemini_tp2, atr_m5):
-    """
-    Gemini'nin SL/TP onerisini KORU.
-    Sadece uc durumlari duzelt (M5 ATR guvenlik agi):
-      - SL cok dar (< 1 x M5 ATR) -> 1 x M5 ATR'ye cikar
-      - SL cok genis (> 6 x M5 ATR) -> 6 x M5 ATR'ye indir
-      - Arasi -> Gemini'nin dedigi AYNEN kalir
-    """
     try:
         giris_f = float(str(giris).replace(",", "."))
         sl_f    = float(str(gemini_sl).replace(",", "."))
@@ -256,24 +299,20 @@ def kirp_sl_tp(symbol, giris, gemini_sl, gemini_tp1, gemini_tp2, atr_m5):
     min_m = atr * ATR_MIN_CARPAN
     max_m = atr * ATR_MAX_CARPAN
 
-    # Gemini'nin mesafeleri (mutlak)
     sl_mesafe  = abs(giris_f - sl_f)
     tp1_mesafe = abs(giris_f - tp1_f)
     tp2_mesafe = abs(giris_f - tp2_f)
 
-    # SL: sadece uc durumlari duzelt, arasi KORU
     if sl_mesafe < min_m:
         sl_k = min_m
     elif sl_mesafe > max_m:
         sl_k = max_m
     else:
-        sl_k = sl_mesafe   # Gemini'nin dedigi AYNEN kalir
+        sl_k = sl_mesafe
 
-    # TP1: en az SL x 1.2 (R/R alt sinir), ust sinir YOK
     tp1_min = sl_k * MIN_RR_TP1
     tp1_k = tp1_mesafe if tp1_mesafe >= tp1_min else tp1_min
 
-    # TP2: en az TP1 x 1.2, ust sinir YOK
     tp2_min = tp1_k * 1.2
     tp2_k = tp2_mesafe if tp2_mesafe >= tp2_min else tp2_min
 
@@ -317,6 +356,7 @@ Her grafigin USTUNDE numara, rol ve ATR degeri YAZIYOR. Once bunlari oku.
 - M15 ATR: {atr_m15} puan
 - M5  ATR: {atr_m5} puan  (SL/TP icin guvenlik sinirlari bu baz alinir)
 - M1  ATR: {atr_m1} puan
+- SON SPIKE BILGISI: {spike_bilgi}
 
 === SL/TP NASIL BELIRLEMELISIN (COK ONEMLI) ===
 1. Once GRAFIKLERDEKI destek/direnc/FVG/likidite seviyelerine bak
@@ -329,18 +369,21 @@ Her grafigin USTUNDE numara, rol ve ATR degeri YAZIYOR. Once bunlari oku.
 
 Yani SEN yapisal seviyeleri kullan, bot sadece guvenlik icin araligi kontrol eder.
 
-=== CRASH/BOOM DAVRANISI ===
+=== CRASH/BOOM DAVRANISI (COK KRITIK) ===
 - Crash sembolleri ANI DUSUS spike'lari atar (asagi)  -> SHORT bias
 - Boom sembolleri ANI YUKSELIS spike'lari atar (yukari) -> LONG bias
-- Bleed (yavas kayma) evresinde POZISYON ACILMAMALI
+- BLEED EVRESI: Crash'te yavas yukari, Boom'da yavas asagi hareket
+- BLEED EVRESINDE POZISYON ACILMAMALI - cunku spike gelene kadar zarar birikir
 - Spike SONRASI duzeltme evresinde giris yapilabilir
+- SPIKE ZAMANLAMASI RASTGELEDIR - ortalamaya bakip "kesin simdi" deme
 
 === KARAR KURALLARI ===
 1. H1, M30, M15 CELISIYORSA -> 'yon' = 'BEKLE'
-2. Guven %65 altindaysa -> 'BEKLE'
-3. Giris noktasi GUNCEL FIYAT'a cok yakin olmali
-4. Guven degisken ver (%50, %65, %75, %85, %95)
-5. SL/TP icin YAPISAL seviyeleri kullan (destek/direnc/FVG)
+2. Guven %75 altindaysa -> 'BEKLE'
+3. M1'de bleed evresi varsa -> 'BEKLE' (yavas ters hareket)
+4. Giris noktasi GUNCEL FIYAT'a cok yakin olmali
+5. Guven degisken ver (%50, %65, %75, %85, %95)
+6. SL/TP icin YAPISAL seviyeleri kullan
 
 === CIKTI FORMATI ===
 - SADECE gecerli JSON dondur. Aciklama yazma.
@@ -524,14 +567,16 @@ def gemini_istek_at(url, payload, headers):
         SON_ISTEK_ZAMANI[0] = time.time()
         return resp
 
-def analyze_chart(image_bytes, cid, symbol, isim, fiyat, atr_h1, atr_m30, atr_m15, atr_m5, atr_m1):
-    print(f"Analiz: {isim} (4 TF + M5 ATR)", flush=True)
+def analyze_chart(image_bytes, cid, symbol, isim, fiyat,
+                  atr_h1, atr_m30, atr_m15, atr_m5, atr_m1, spike_bilgi):
+    print(f"Analiz: {isim} (V9 - Filtreli)", flush=True)
     min_sl = round(atr_m5 * ATR_MIN_CARPAN, 2)
     max_sl = round(atr_m5 * ATR_MAX_CARPAN, 2)
     prompt_text = PROMPT_TEMPLATE.format(
         sembol=isim, fiyat=fiyat,
         atr_h1=atr_h1, atr_m30=atr_m30, atr_m15=atr_m15,
         atr_m5=atr_m5, atr_m1=atr_m1,
+        spike_bilgi=spike_bilgi,
         min_sl=min_sl, max_sl=max_sl)
 
     img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
@@ -640,7 +685,8 @@ def json_parse_et(resp, cid):
 
     try: g = int(a.get("guven", 0))
     except: g = 0
-    if g < 65: a["yon"] = "BEKLE"
+    # YENI: 75 altinda BEKLE
+    if g < MIN_GUVEN: a["yon"] = "BEKLE"
 
     try: a["kalan_mum"] = max(1, min(3, int(a.get("kalan_mum", 1))))
     except: a["kalan_mum"] = 1
@@ -720,11 +766,12 @@ def _menu_keyboard():
     ]}
 
 def _menu_text():
-    return ("🤖 *DERIV SENTETIK ANALIZ BOTU*\n\n"
+    return ("🤖 *DERIV BOT V9*\n\n"
             "📊 Analiz için bir sembol seç:\n"
             "• H1 + M30 + M15 + M1 grafikleri\n"
-            "• Gemini yapısal SL/TP önerir\n"
-            "• M5 ATR güvenlik kontrolü yapar\n\n"
+            "• Bleed filtresi aktif\n"
+            "• Güven eşiği: %75\n"
+            "• M5 ATR güvenlik kontrolü\n\n"
             "⬇️ Sembol seç:")
 
 def show_menu(cid, mid=None):
@@ -769,17 +816,17 @@ def show_istatistik(cid, mid=None):
     else: send_msg(cid, text, "Markdown", _ana_menu_buton())
 
 def show_yardim(cid, mid=None):
-    text = ("❓ *YARDIM*\n\n"
+    text = ("❓ *YARDIM - V9*\n\n"
             "📊 Analiz: /menu → sembol butonuna bas\n\n"
             "📋 *4 Zaman Dilimi*\n"
             "• 1) H1  → MAKRO TREND (mavi)\n"
             "• 2) M30 → ANA TREND (turuncu)\n"
             "• 3) M15 → ORTA VADE (yesil)\n"
             "• 4) M1  → GIRIS ZAMANI (kirmizi)\n\n"
-            "🎯 *SL/TP:* Gemini yapısal seviyelerden belirler\n"
-            "🛡️ *Güvenlik:* M5 ATR sadece uç durumları düzeltir\n"
-            "   • SL en az 1×M5 ATR\n"
-            "   • SL en fazla 6×M5 ATR\n\n"
+            "🛡️ *V9 Filtreleri:*\n"
+            "• Güven eşiği: %75\n"
+            "• Bleed filtresi (M1 yavaş ters hareket)\n"
+            "• M5 ATR güvenlik kontrolü\n\n"
             "⚠️ Yatırım tavsiyesi değildir.")
     if mid: edit_message_text(cid, mid, text, "Markdown", _ana_menu_buton())
     else: send_msg(cid, text, "Markdown", _ana_menu_buton())
@@ -788,7 +835,7 @@ def show_yardim(cid, mid=None):
 # DEBUG
 # ==========================================
 def debug_deriv(cid):
-    lines = ["🔧 *DERIV DEBUG v8*", ""]
+    lines = ["🔧 *DERIV DEBUG v9*", ""]
     lines.append("1️⃣ Endpoint testi...")
     basarili = None
     for ep in DERIV_ENDPOINTS:
@@ -819,7 +866,7 @@ def debug_deriv(cid):
     lines.append(f"✅ {len(all_s)} sembol")
 
     lines.append("")
-    lines.append("3️⃣ CRASH1000 - Fiyat + 5 TF ATR:")
+    lines.append("3️⃣ CRASH1000 - Fiyat + ATR:")
     f = get_current_price("CRASH1000")
     if f: lines.append(f"✅ Fiyat: `{f}`")
     else: lines.append("❌ Fiyat yok")
@@ -830,8 +877,6 @@ def debug_deriv(cid):
         if c:
             a = calculate_atr(c, ATR_PERIOD)
             lines.append(f"✅ {tf_name} ATR: `{a}`")
-        else:
-            lines.append(f"❌ {tf_name} mum yok")
 
     send_msg(cid, "\n".join(lines), "Markdown")
 
@@ -927,16 +972,26 @@ def process_analysis(cid, symbol):
     atr_m5  = calculate_atr(m5,  ATR_PERIOD) or VARSAYILAN_ATR
     atr_m1  = calculate_atr(m1,  ATR_PERIOD) or VARSAYILAN_ATR
 
-    print(f"{isim} | fiyat={fiyat} | ATR H1={atr_h1} M30={atr_m30} M15={atr_m15} M5={atr_m5} M1={atr_m1}", flush=True)
+    spike_bilgi = son_spike_bilgisi(m1, "SHORT" if "CRASH" in symbol else "LONG")
+
+    print(f"{isim} | fiyat={fiyat} | ATR M5={atr_m5} | Spike: {spike_bilgi}", flush=True)
 
     png = draw_chart_4tf(symbol, isim, fiyat, atr_h1, atr_m30, atr_m15, atr_m5, atr_m1)
     if not png:
         send_msg(cid, f"❌ Grafik çizilemedi."); return
 
     a = analyze_chart(png, cid, symbol, isim, fiyat,
-                      atr_h1, atr_m30, atr_m15, atr_m5, atr_m1)
+                      atr_h1, atr_m30, atr_m15, atr_m5, atr_m1, spike_bilgi)
     if not a:
         send_msg(cid, "❌ Analiz başarısız."); return
+
+    # YENI: BLEED FILTRESI
+    if a.get("yon") in ("LONG", "SHORT"):
+        bleed_mi, sayi = bleed_kontrol(m1, a["yon"])
+        if bleed_mi:
+            print(f"BLEED FILTRESI: {isim} {a['yon']} -> BEKLE (son 10 mumda {sayi} ters hareket)", flush=True)
+            a["yon"] = "BEKLE"
+            a["uyari"] = f"M1 bleed evresinde ({sayi}/9 ters hareket). Spike beklentisi dusuk."
 
     if a.get("yon") in ("LONG", "SHORT"):
         a["giris"] = str(fiyat)
@@ -953,7 +1008,6 @@ def process_analysis(cid, symbol):
                     tp2 = str(t1 + abs(g - t1) * 0.3) if a["yon"] == "LONG" else str(t1 - abs(g - t1) * 0.3)
                 except: tp2 = tp1
 
-            # M5 ATR bazli guvenlik kontrolu
             h = kirp_sl_tp(symbol, fiyat, gemini_sl, tp1, tp2, atr_m5)
             if h:
                 if a["yon"] == "SHORT":
@@ -969,11 +1023,6 @@ def process_analysis(cid, symbol):
                 a["take_profit"] = [str(round(t1, 4)), str(round(t2, 4))]
                 rr = h["tp1_mesafe"] / h["sl_mesafe"] if h["sl_mesafe"] > 0 else 0
                 a["risk_odul"] = f"1:{round(rr, 2)}"
-
-                print(f"Gemini SL={h['gemini_sl']} TP1={h['gemini_tp1']} | "
-                      f"Kullanilan SL={h['sl_mesafe']} TP1={h['tp1_mesafe']} | "
-                      f"Duzeltildi: SL={h['sl_duzeltildi']} TP1={h['tp1_duzeltildi']}",
-                      flush=True)
             else:
                 a["yon"] = "BEKLE"; a["uyari"] = "SL/TP hesaplanamadı."
         else:
@@ -1001,7 +1050,7 @@ def process_analysis(cid, symbol):
 def main():
     threading.Thread(target=run_health_server, daemon=True).start()
     init_db()
-    print(f"=== DERIV BOT v8 (M5 ATR + Gemini SL/TP) BASLADI (ID: {ADMIN_ID}) ===", flush=True)
+    print(f"=== DERIV BOT V9 (Bleed Filtresi + Guven 75) BASLADI (ID: {ADMIN_ID}) ===", flush=True)
     offset = get_offset()
 
     while True:
