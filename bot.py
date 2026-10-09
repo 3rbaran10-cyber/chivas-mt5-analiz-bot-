@@ -25,10 +25,11 @@ MIN_ISTEK_ARASI = 3.0
 USER_COOLDOWN = {}
 RATE_LIMIT_SECONDS = 300
 
-# V4.1 AYARLAR
+# V4.2 AYARLAR
 MAX_TARANAN = 30
 MIN_OLASILIK = 55
 MIN_SART = 4
+HAFTALIK_UCRET = "100$"
 
 # ==========================================
 # HEALTH SERVER
@@ -149,16 +150,16 @@ def canli_maclari_al():
     return maclar
 
 def yaklasan_maclari_al(dakika_araligi=120):
+    """X dakika icinde baslayacak maclar. UTC hesabi."""
     bugun = datetime.now().strftime("%Y-%m-%d")
     r = api_football("fixtures", {"date": bugun})
     if not r: return []
-    simdi = datetime.now()
+    simdi_utc = datetime.utcnow()
     maclar = []
     for f in r.get("response", []):
         try:
-            mac_saati = datetime.fromisoformat(f["fixture"]["date"].replace("Z", "+00:00"))
-            mac_saati_local = mac_saati.replace(tzinfo=None) + timedelta(hours=3)
-            fark = (mac_saati_local - simdi).total_seconds() / 60
+            mac_saati_utc = datetime.fromisoformat(f["fixture"]["date"].replace("Z", ""))
+            fark = (mac_saati_utc - simdi_utc).total_seconds() / 60
             if 0 < fark <= dakika_araligi:
                 maclar.append(f)
         except: continue
@@ -336,15 +337,15 @@ ALT ICIN ARANAN SARTLAR (kac tanesi uyuyor?):
 7. Sakatliklar hucum oyuncularini mi vurmus
 
 KARAR:
-- 5+ sart uyuyorsa -> "2.5 ALT" veya "1.5 ALT" ver (yuksek olasilik)
-- 3-4 sart uyuyorsa -> "3.5 ALT" ver (orta olasilik)
-- 2 veya daha az sart uyuyorsa -> "BEKLE" ver (oynama)
+- 5+ sart uyuyorsa -> "2.5 ALT" veya "1.5 ALT" ver
+- 3-4 sart uyuyorsa -> "3.5 ALT" ver
+- 2 veya daha az sart uyuyorsa -> "BEKLE" ver
 
 ONEMLI:
 - Sadece ALT tercihi ver, UST asla verme
 - KG, korner, kart verme - sadece gol ALT
 - Olasilik %55'in altindaysa "BEKLE" ver
-- Gerekce 2-3 cumle, EN ONEMLI sebepleri belirt
+- Gerekce 2-3 cumle
 
 === CIKTI (SADECE JSON) ===
 {{
@@ -628,12 +629,13 @@ def _menu_keyboard():
     ]}
 
 def _menu_text():
-    return ("🤖 *GOL ALT KUPON BOTU v4.1*\n\n"
-            "🎯 Sadece *GOL ALT* bahisleri\n"
-            "🔍 30 maç taranır\n"
-            "✅ En iyi 2 ALT maçı seçilir\n"
-            "🧠 Gemini 3.1 Pro analizi\n\n"
-            "⬇️ Menüden seç:")
+    return (f"🤖 *GOL ALT KUPON BOTU v4.2*\n\n"
+            f"🎯 Sadece *GOL ALT* bahisleri\n"
+            f"🔍 {MAX_TARANAN} maç taranır\n"
+            f"✅ En iyi 2 ALT maçı seçilir\n"
+            f"🧠 Gemini 3.1 Pro analizi\n\n"
+            f"💎 *Haftalık abonelik: {HAFTALIK_UCRET}*\n\n"
+            f"⬇️ Menüden seç:")
 
 def show_menu(cid, mid=None):
     if mid: edit_message_text(cid, mid, _menu_text(), "Markdown", _menu_keyboard())
@@ -669,19 +671,20 @@ def show_istatistik(cid, mid=None):
     else: send_msg(cid, text, "Markdown", _ana_menu_buton())
 
 def show_yardim(cid, mid=None):
-    text = ("❓ *YARDIM - v4.1*\n\n"
-            "🎯 /start — Menü\n"
-            "⚽ /kupon — ALT kuponu al\n"
-            "📜 /gecmis — Son kuponlar\n"
-            "📊 /istatistik — Başarı oranı\n\n"
-            "📌 *Bu bot ne yapar?*\n"
-            "• 30 maçı analiz eder\n"
-            "• Sadece GOL ALT bahisleri\n"
-            "• 1.5 ALT / 2.5 ALT / 3.5 ALT\n"
-            "• En iyi 2 maçı seçer\n"
-            "• Olasılık eşiği: %55\n"
-            "• Min şart: 4/7\n\n"
-            "⚠️ Yatırım tavsiyesi değildir.")
+    text = (f"❓ *YARDIM - v4.2*\n\n"
+            f"🎯 /start — Menü\n"
+            f"⚽ /kupon — ALT kuponu al\n"
+            f"📜 /gecmis — Son kuponlar\n"
+            f"📊 /istatistik — Başarı oranı\n\n"
+            f"📌 *Bu bot ne yapar?*\n"
+            f"• {MAX_TARANAN} maçı analiz eder\n"
+            f"• Sadece GOL ALT bahisleri\n"
+            f"• 1.5 ALT / 2.5 ALT / 3.5 ALT\n"
+            f"• En iyi 2 maçı seçer\n"
+            f"• Olasılık eşiği: %{MIN_OLASILIK}\n"
+            f"• Min şart: {MIN_SART}/7\n\n"
+            f"💎 Haftalık abonelik: {HAFTALIK_UCRET}\n\n"
+            f"⚠️ Yatırım tavsiyesi değildir.")
     if mid: edit_message_text(cid, mid, text, "Markdown", _ana_menu_buton())
     else: send_msg(cid, text, "Markdown", _ana_menu_buton())
 
@@ -747,7 +750,7 @@ def handle_callback(cq):
 def main():
     threading.Thread(target=run_health_server, daemon=True).start()
     init_db()
-    print("=== ALT KUPON BOTU v4.1 BASLADI ===", flush=True)
+    print("=== ALT KUPON BOTU v4.2 BASLADI ===", flush=True)
     print(f"API-Football: {'VAR' if API_FOOTBALL_KEY else 'YOK'}", flush=True)
     print(f"Gemini: {'VAR' if GEMINI_API_KEY else 'YOK'}", flush=True)
     print(f"Telegram: {'VAR' if TELEGRAM_TOKEN else 'YOK'}", flush=True)
