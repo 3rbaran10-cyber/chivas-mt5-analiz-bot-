@@ -185,7 +185,6 @@ def puan_durumu_al(league_id, season):
     return None
 
 def takim_sezon_istatistik_al(team_id, league_id, season):
-    """Takimin sezon istatistikleri: gol, kart, form."""
     r = api_football("teams/statistics", {
         "team": team_id, "league": league_id, "season": season
     })
@@ -193,10 +192,8 @@ def takim_sezon_istatistik_al(team_id, league_id, season):
     return r.get("response", {})
 
 def sezon_ozetle(sezon, takim_adi):
-    """Sezon istatistiklerini ozetle."""
     if not sezon:
         return f"{takim_adi}: sezon verisi yok"
-
     try:
         form = sezon.get("form", "?")
         played = sezon.get("fixtures", {}).get("played", {}).get("total", 0)
@@ -207,7 +204,6 @@ def sezon_ozetle(sezon, takim_adi):
         g_for_avg = sezon.get("goals", {}).get("for", {}).get("average", {}).get("total", "?")
         g_ag_avg = sezon.get("goals", {}).get("against", {}).get("average", {}).get("total", "?")
 
-        # Kart: dakika araliklarina gore topla
         cards = sezon.get("cards", {})
         yellow_total = 0
         red_total = 0
@@ -536,7 +532,6 @@ def kupon_olustur(cid):
 
     ort_guven = round(sum(km["analiz"]["guven"] for km in kupon_maclar) / len(kupon_maclar))
 
-    # KISA FORMAT
     t = []
     t.append("🎯 CANLI KUPON")
     t.append(f"⏰ {datetime.now().strftime('%d.%m.%Y - %H:%M')}")
@@ -721,7 +716,7 @@ def handle_callback(cq):
 def main():
     threading.Thread(target=run_health_server, daemon=True).start()
     init_db()
-    print("=== MAC KUPON BOTU v2 BASLADI ===", flush=True)
+    print("=== MAC KUPON BOTU v3 BASLADI ===", flush=True)
     print(f"API-Football: {'VAR' if API_FOOTBALL_KEY else 'YOK'}", flush=True)
     print(f"Gemini: {'VAR' if GEMINI_API_KEY else 'YOK'}", flush=True)
     print(f"Telegram: {'VAR' if TELEGRAM_TOKEN else 'YOK'}", flush=True)
