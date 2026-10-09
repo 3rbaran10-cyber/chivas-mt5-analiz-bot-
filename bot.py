@@ -1,6 +1,6 @@
 import os
-import io, json, base64, time, math, requests, threading, re, sqlite3
-from PIL import Image, ImageDraw, ImageFont
+import io, json, time, requests, threading, sqlite3, re
+from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 # ==========================================
@@ -8,980 +8,609 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 # ==========================================
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+API_FOOTBALL_KEY = os.environ.get("API_FOOTBALL_KEY")
 
 GEMINI_MODEL = "gemini-3.1-pro-preview"
 GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+
+API_FOOTBALL_BASE = "https://v3.football.api-sports.io"
+API_FOOTBALL_HEADERS = {"x-apisports-key": API_FOOTBALL_KEY}
+
+ADMIN_ID = 5504006147
 
 GEMINI_LOCK = threading.Lock()
 SON_ISTEK_ZAMANI = [0.0]
 MIN_ISTEK_ARASI = 3.0
 
-# ==========================================
-# OZEL KULLANIM
-# ==========================================
-ADMIN_ID = 5504006147
-
-# ==========================================
-# DESTEKLENEN SEMBOLLER (16 adet)
-# ==========================================
-ALLOWED_SYMBOLS = [
-    "BreakX 1200", "BreakX 1800",
-    "GainX 1200", "GainX 999",
-    "MAX GainX 1000", "MAX GainX 2000",
-    "MAX PainX 1000", "MAX PainX 2000",
-    "PainX 1200", "PainX 400", "PainX 800", "PainX 999",
-    "SwitchX 1200", "SwitchX 1800",
-    "TrendX 1200", "TrendX 1800",
-]
-ALLOWED_SYMBOLS_NORM = {
-    s.lower().replace("-", " ").replace("/", " ").strip(): s for s in ALLOWED_SYMBOLS
-}
-
-# ==========================================
-# M1 SEMBOL ATR DEGERLERI
-# ==========================================
-SYMBOL_ATR = {
-    "BreakX 1200": 5,
-    "BreakX 1800": 5,
-    "GainX 1200": 9,
-    "GainX 999": 22,
-    "MAX GainX 1000": 72,
-    "MAX GainX 2000": 193,
-    "MAX PainX 1000": 156,
-    "MAX PainX 2000": 225,
-    "PainX 1200": 9,
-    "PainX 400": 10,
-    "PainX 800": 7,
-    "PainX 999": 19,
-    "SwitchX 1200": 5,
-    "SwitchX 1800": 4,
-    "TrendX 1200": 5,
-    "TrendX 1800": 5,
-}
-VARSAYILAN_ATR = 20
-
-MIN_ATR_CARPAN = 1.0
-MAX_ATR_CARPAN = 3.0
+USER_COOLDOWN = {}
+RATE_LIMIT_SECONDS = 300  # 5 dk
 
 # ==========================================
 # HEALTH SERVER
 # ==========================================
 class Health(BaseHTTPRequestHandler):
     def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
+        self.send_response(200); self.end_headers()
         self.wfile.write(b"OK")
-    def log_message(self, *a):
-        pass
+    def log_message(self, *a): pass
 
 def run_health_server():
     port = int(os.environ.get("PORT", 10000))
     HTTPServer(("0.0.0.0", port), Health).serve_forever()
 
 # ==========================================
-# ORTAK KURALLAR
-# ==========================================
-SEVIYE_KURALLARI = """
-M1 ODAKLI ISLEM:
-Bu gorselde M30, M15, M1 birlikte olabilir. Ama GIRIS SADECE M1 yapisina gore verilir.
-M30 ve M15 SADECE TREND ONAYI icin kullanilir (yon dogrulamasi).
-
-GIRIS NOKTASI:
-Giris noktasini M1'deki guncel fiyata YAKIN ver.
-Anlik fiyattan en fazla 5-10 puan uzakta olsun.
-
-SL/TP FIYATLARI (ONEMLI):
-Sana bu sembolun M1 ATR degeri bildirilecek.
-- SL mesafesi: Bu ATR degerinin 1x - 3x arasi olmali
-- TP1 mesafesi: SL mesafesiyle ayni veya biraz fazla (R/R 1:1 veya 1:1.5)
-- TP2 mesafesi: TP1'in %20 ustu
-- Bu sinirlarin disina CIKMA.
-
-YOL PUANI SIRALAMASI:
-yol_puani dizisini YON ile uyumlu sirala.
-- SHORT yonunde: ilk puan EN YUKSEK (orn: 90), son puan EN DUSUK (orn: 10) olmali.
-- LONG yonunde: ilk puan EN DUSUK (orn: 10), son puan EN YUKSEK (orn: 90) olmali.
-- BEKLE yonunde: yol_puani dizisi gondermek zorunlu degil.
-"""
-
-PROMPT_TEMPLATE = """Sen dunyanin en iyi {sembol} analiz uzmanisin. 15+ yillik deneyimli profesyonelsin. Smart Money konseptlerini (ICT) derinlemesine bilirsin.
-
-Sana {sembol} icin BIR MT5 ekran goruntusu gonderiliyor. Bu TEK bir fotograftir ama icinde YAN YANA bolunmus 3 grafik olabilir: M30, M15, M1.
-
-ONEMLI BILGI:
-{sembol} sembolunun M1 ATR degeri = {atr} puan.
-SL mesafesi bu ATR'nin 1x - 3x arasi olmali (yani {min_sl} - {max_sl} puan arasi).
-TP1 mesafesi SL ile uyumlu olmali.
-TP2 mesafesi TP1'in %20 ustu.
-
-GOREV:
-1. Gorselde kac zaman dilimi oldugunu tespit et (sol ustteki M30, M15, M1 etiketlerini oku).
-2. Tum TF'leri birlikte degerlendir:
-   - M30 -> ana trend yonu
-   - M15 -> orta vade yapi ve onay
-   - M1  -> GIRIS icin TEK referans
-3. M1'deki yapiya gore GIRIS, SL, TP1, TP2 fiyatlarini ver.
-
-""" + SEVIYE_KURALLARI + """
-KULLANILACAK TEKNIKLER:
-- Market yapisi: HH/LL, BOS, CHoCH
-- Destek/direnc, Order Block, Supply/Demand
-- VWAP, FVG, Liquidity Sweep
-- EMA 20/50/200, RSI, MACD, Hacim
-- Mum formasyonlari (engulfing, pin bar, doji, hammer)
-- Fibonacci retracement
-
-KARAR KURALLARI:
-1. Guven %65 altindaysa 'yon' = 'BEKLE'.
-2. Guven oranini degisken ver (%50, %65, %75, %85, %95).
-3. M30 ve M15 celisiyorsa -> guven dusur veya 'BEKLE' ver.
-
-MUM SAYISI: M1 grafiginde 1-3 mum arasi ver.
-
-M1 BOLGE TESPITI:
-Gorselde M1 grafiginin konumunu YUZDE olarak bul.
-- x: sol kenardan uzaklik (0-100)
-- y: ust kenardan uzaklik (0-100)
-- w: genislik (0-100)
-- h: yukseklik (0-100)
-Sadece M1 varsa: x=0, y=0, w=100, h=100 ver.
-
-FORMAT: SADECE gecerli JSON. Sayilarda NOKTA kullan. Turkce yaz.
-
-JSON SEMASI:
-- sembol, yon ("LONG"|"SHORT"|"BEKLE"), guven (0-100)
-- giris (string, M1'deki guncel fiyata yakin)
-- stop_loss (string, fiyat)
-- take_profit (array, [tp1_fiyat, tp2_fiyat])
-- trend_m1, vwap_durumu, fvg_tespit, likidite_durumu
-- destekler (array), direncler (array), formasyonlar (array)
-- kullanilan_teknikler (array)
-- kisa_analiz, gerekce
-- yol_puani (array, 7 sayi 0-100, YON ILE UYUMLU SIRALI)
-- kalan_mum (1-3), mum_yonu, hareket_aciklamasi, sonraki_hamle, uyari
-- m1_bolge (object: x, y, w, h)"""
-
-PROMPT_TEMPLATE_MULTI = """Sen dunyanin en iyi {sembol} analiz uzmanisin. 15+ yillik deneyimli profesyonelsin. Smart Money konseptlerini (ICT) derinlemesine bilirsin.
-
-Sana {sembol} icin birden fazla zaman diliminde grafik gonderiliyor.
-
-ONEMLI BILGI:
-{sembol} sembolunun M1 ATR degeri = {atr} puan.
-SL mesafesi bu ATR'nin 1x - 3x arasi olmali (yani {min_sl} - {max_sl} puan arasi).
-TP1 mesafesi SL ile uyumlu olmali.
-TP2 mesafesi TP1'in %20 ustu.
-
-GOREV:
-1. Hangi grafigin hangi TF oldugunu sol ust kosedeki etiketlerden (M30, M15, M1) OKU.
-2. En buyuk TF'den en kucuge sirala (M30 -> M15 -> M1).
-3. M1'deki yapiya gore GIRIS, SL, TP1, TP2 fiyatlarini ver.
-
-COKLU TF KURALLARI:
-- M30 ve M15 ayni yon -> guven yuksek (%75-90)
-- M30 ve M15 celisiyor -> 'BEKLE'
-- Ucu uyumluysa -> en guclu sinyal
-
-""" + SEVIYE_KURALLARI + """
-KULLANILACAK TEKNIKLER:
-- Market yapisi: HH/LL, BOS, CHoCH (her TF'de ayri)
-- Destek/direnc, Order Block, Supply/Demand
-- VWAP, FVG, Liquidity Sweep
-- EMA 20/50/200, RSI, MACD, Hacim
-- Mum formasyonlari
-- Fibonacci retracement
-
-KARAR KURALLARI:
-1. Guven %65 alti -> 'BEKLE'.
-2. Guven degisken ver.
-
-MUM SAYISI: M1'de 1-3 mum arasi ver.
-
-M1 BOLGE TESPITI:
-M1 grafiginin konumunu YUZDE olarak bul.
-- x, y, w, h (0-100 arasi tam sayi)
-- Tek grafik varsa: x=0, y=0, w=100, h=100 ver.
-
-FORMAT: SADECE gecerli JSON. Sayilarda NOKTA kullan. Turkce yaz.
-
-JSON SEMASI:
-- sembol, yon ("LONG"|"SHORT"|"BEKLE"), guven (0-100)
-- giris (string, M1'deki guncel fiyata yakin)
-- stop_loss (string, fiyat)
-- take_profit (array, [tp1_fiyat, tp2_fiyat])
-- trend_m1, vwap_durumu, fvg_tespit, likidite_durumu
-- destekler (array), direncler (array), formasyonlar (array)
-- kullanilan_teknikler (array)
-- kisa_analiz, gerekce
-- yol_puani (array, 7 sayi 0-100, YON ILE UYUMLU SIRALI)
-- kalan_mum (1-3), mum_yonu, hareket_aciklamasi, sonraki_hamle, uyari
-- m1_bolge (object: x, y, w, h)"""
-
-# ==========================================
 # SQLITE
 # ==========================================
-DB_PATH = "/tmp/telegram_offset.db"
+DB_PATH = "/tmp/bot.db"
 
 def init_db():
     try:
         conn = sqlite3.connect(DB_PATH)
         conn.execute("CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value INTEGER)")
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS analyses (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                cid INTEGER, sembol TEXT, yon TEXT, guven INTEGER,
-                giris TEXT, stop_loss TEXT, tp1 TEXT, tp2 TEXT,
-                kalan_mum INTEGER, mum_yonu TEXT, kisa_analiz TEXT,
-                ts INTEGER, sonuc TEXT DEFAULT NULL
-            )
-        """)
-        conn.commit()
-        conn.close()
+        conn.execute("""CREATE TABLE IF NOT EXISTS kuponlar (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cid INTEGER, tarih TEXT, maclar TEXT,
+            toplam_oran REAL, guven INTEGER,
+            sonuc TEXT DEFAULT NULL, ts INTEGER)""")
+        conn.commit(); conn.close()
         print("DB hazir", flush=True)
     except Exception as e:
-        print(f"DB init hatasi: {e}", flush=True)
+        print(f"DB hatasi: {e}", flush=True)
 
 def get_offset():
     try:
         conn = sqlite3.connect(DB_PATH)
         cur = conn.execute("SELECT value FROM state WHERE key='offset'")
-        row = cur.fetchone()
-        conn.close()
+        row = cur.fetchone(); conn.close()
         return row[0] if row else 0
-    except:
-        return 0
+    except: return 0
 
-def save_offset(offset):
+def save_offset(o):
     try:
         conn = sqlite3.connect(DB_PATH)
-        conn.execute("INSERT OR REPLACE INTO state (key, value) VALUES ('offset', ?)", (offset,))
-        conn.commit()
-        conn.close()
-    except Exception as e:
-        print(f"Offset hatasi: {e}", flush=True)
+        conn.execute("INSERT OR REPLACE INTO state (key, value) VALUES ('offset', ?)", (o,))
+        conn.commit(); conn.close()
+    except: pass
 
-def save_analysis(cid, sembol, a):
+def save_kupon(cid, maclar_json, toplam_oran, guven):
     try:
-        tps = a.get("take_profit") or []
-        tp1 = tps[0] if len(tps) > 0 else None
-        tp2 = tps[1] if len(tps) > 1 else None
         conn = sqlite3.connect(DB_PATH)
-        cur = conn.execute("""
-            INSERT INTO analyses (cid, sembol, yon, guven, giris, stop_loss, tp1, tp2,
-                                  kalan_mum, mum_yonu, kisa_analiz, ts)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            cid, sembol, a.get("yon"), a.get("guven"),
-            a.get("giris"), a.get("stop_loss"), tp1, tp2,
-            a.get("kalan_mum"), a.get("mum_yonu"),
-            a.get("kisa_analiz"), int(time.time())
-        ))
+        cur = conn.execute("""INSERT INTO kuponlar
+            (cid, tarih, maclar, toplam_oran, guven, ts)
+            VALUES (?,?,?,?,?,?)""",
+            (cid, datetime.now().strftime("%d.%m.%Y %H:%M"),
+             maclar_json, toplam_oran, guven, int(time.time())))
         conn.commit()
-        rid = cur.lastrowid
-        conn.close()
+        rid = cur.lastrowid; conn.close()
         return rid
     except Exception as e:
-        print(f"save_analysis hatasi: {e}", flush=True)
-        return None
+        print(f"save_kupon: {e}", flush=True); return None
 
-def update_sonuc(analiz_id, sonuc):
+def update_sonuc(kid, sonuc):
     try:
         conn = sqlite3.connect(DB_PATH)
-        cur = conn.execute("UPDATE analyses SET sonuc=? WHERE id=? AND sonuc IS NULL", (sonuc, analiz_id))
-        degisti = cur.rowcount
-        conn.commit()
-        conn.close()
-        return degisti > 0
-    except Exception as e:
-        print(f"update_sonuc hatasi: {e}", flush=True)
-        return False
+        cur = conn.execute("UPDATE kuponlar SET sonuc=? WHERE id=? AND sonuc IS NULL", (sonuc, kid))
+        d = cur.rowcount; conn.commit(); conn.close()
+        return d > 0
+    except: return False
 
 def get_gecmis(cid, limit=10):
     try:
         conn = sqlite3.connect(DB_PATH)
-        cur = conn.execute("""
-            SELECT id, sembol, yon, guven, sonuc, ts
-            FROM analyses WHERE cid=?
-            ORDER BY id DESC LIMIT ?
-        """, (cid, limit))
-        rows = cur.fetchall()
-        conn.close()
+        cur = conn.execute("""SELECT id, tarih, toplam_oran, guven, sonuc
+            FROM kuponlar WHERE cid=? ORDER BY id DESC LIMIT ?""", (cid, limit))
+        rows = cur.fetchall(); conn.close()
         return rows
-    except:
-        return []
+    except: return []
 
 def get_istatistik(cid):
     try:
         conn = sqlite3.connect(DB_PATH)
-        cur = conn.execute("""
-            SELECT COUNT(*),
-                   SUM(CASE WHEN sonuc='tuttu' THEN 1 ELSE 0 END),
-                   SUM(CASE WHEN sonuc='tutmadi' THEN 1 ELSE 0 END)
-            FROM analyses WHERE cid=? AND yon != 'BEKLE'
-        """, (cid,))
+        cur = conn.execute("""SELECT COUNT(*),
+            SUM(CASE WHEN sonuc='tuttu' THEN 1 ELSE 0 END),
+            SUM(CASE WHEN sonuc='tutmadi' THEN 1 ELSE 0 END)
+            FROM kuponlar WHERE cid=?""", (cid,))
         total, tuttu, tutmadi = cur.fetchone()
-        total = total or 0
-        tuttu = tuttu or 0
-        tutmadi = tutmadi or 0
-
-        cur = conn.execute("""
-            SELECT sembol, COUNT(*),
-                   SUM(CASE WHEN sonuc='tuttu' THEN 1 ELSE 0 END),
-                   SUM(CASE WHEN sonuc='tutmadi' THEN 1 ELSE 0 END)
-            FROM analyses WHERE cid=? AND yon != 'BEKLE'
-            GROUP BY sembol HAVING COUNT(*) > 0
-            ORDER BY COUNT(*) DESC
-        """, (cid,))
-        semboller = cur.fetchall()
         conn.close()
-        return {"total": total, "tuttu": tuttu, "tutmadi": tutmadi, "semboller": semboller}
-    except Exception as e:
-        print(f"istatistik hatasi: {e}", flush=True)
-        return {"total": 0, "tuttu": 0, "tutmadi": 0, "semboller": []}
+        return {"total": total or 0, "tuttu": tuttu or 0, "tutmadi": tutmadi or 0}
+    except: return {"total": 0, "tuttu": 0, "tutmadi": 0}
 
 # ==========================================
-# YARDIMCILAR
+# API-FOOTBALL
 # ==========================================
-def send_msg(cid, text, parse_mode=None, reply_markup=None):
+def api_football(endpoint, params=None):
     try:
-        payload = {"chat_id": cid, "text": text}
-        if parse_mode:
-            payload["parse_mode"] = parse_mode
-        if reply_markup:
-            payload["reply_markup"] = reply_markup
-        r = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
-                          json=payload, timeout=10)
-        return r.json().get("result", {}).get("message_id")
+        r = requests.get(f"{API_FOOTBALL_BASE}/{endpoint}",
+                         headers=API_FOOTBALL_HEADERS,
+                         params=params or {}, timeout=20)
+        if r.status_code != 200:
+            print(f"API-Football hata: {r.status_code}", flush=True)
+            return None
+        return r.json()
     except Exception as e:
-        print(f"send_msg hatasi: {e}", flush=True)
+        print(f"API-Football istek hatasi: {str(e)[:150]}", flush=True)
         return None
 
-def send_photo(cid, photo_bytes, caption="", reply_markup=None):
-    try:
-        data = {"chat_id": cid, "caption": caption[:1024]}
-        if reply_markup:
-            data["reply_markup"] = json.dumps(reply_markup)
-        r = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto",
-                          data=data, files={"photo": ("chart.png", photo_bytes)}, timeout=30)
-        return r.json().get("result", {}).get("message_id")
-    except Exception as e:
-        print(f"send_photo hatasi: {e}", flush=True)
-        return None
-
-def edit_reply_markup(cid, message_id, reply_markup=None):
-    try:
-        requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/editMessageReplyMarkup",
-                      json={"chat_id": cid, "message_id": message_id, "reply_markup": reply_markup or {"inline_keyboard": []}},
-                      timeout=10)
-    except Exception as e:
-        print(f"edit_markup hatasi: {e}", flush=True)
-
-def edit_message_text(cid, message_id, text, parse_mode=None, reply_markup=None):
-    try:
-        payload = {"chat_id": cid, "message_id": message_id, "text": text}
-        if parse_mode:
-            payload["parse_mode"] = parse_mode
-        if reply_markup:
-            payload["reply_markup"] = reply_markup
-        requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/editMessageText",
-                      json=payload, timeout=10)
-    except Exception as e:
-        print(f"edit_text hatasi: {e}", flush=True)
-
-def get_file_bytes(file_id):
-    r = requests.get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getFile",
-                     params={"file_id": file_id}, timeout=20).json()
-    url = f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/{r['result']['file_path']}"
-    return requests.get(url, timeout=30).content
-
-def temizle_sayi(deger):
-    if deger is None:
-        return deger
-    s = str(deger).strip()
-    if ',' in s and '.' not in s:
-        s = s.replace(',', '.')
-    return s
-
-def validate_yol_puani(puanlar):
-    if not isinstance(puanlar, list):
-        return None
-    temiz = []
-    for p in puanlar:
+def canli_maclari_al():
+    """1-70. dakika arasi canli maclar."""
+    r = api_football("fixtures", {"live": "all"})
+    if not r: return []
+    maclar = []
+    for f in r.get("response", []):
         try:
-            p = float(str(p).replace(',', '.'))
-            if 0 <= p <= 100:
-                temiz.append(p)
-        except (ValueError, TypeError):
-            continue
-    return temiz if len(temiz) >= 2 else None
+            dakika = f["fixture"]["status"]["elapsed"] or 0
+            if 1 <= dakika <= 70:
+                maclar.append(f)
+        except: continue
+    return maclar
 
-def caption_to_symbol(caption):
-    if not caption:
-        return None
-    norm = caption.lower().replace("-", " ").replace("/", " ").strip()
-    norm = re.sub(r"\s+", " ", norm)
-    for key, orijinal in ALLOWED_SYMBOLS_NORM.items():
-        if norm == key or norm.startswith(key + " ") or norm.endswith(" " + key) or (" " + key + " ") in (" " + norm + " "):
-            return orijinal
-    for key, orijinal in ALLOWED_SYMBOLS_NORM.items():
-        if key in norm:
-            return orijinal
+def yaklasan_maclari_al(dakika_araligi=60):
+    """X dakika icinde baslayacak maclar."""
+    bugun = datetime.now().strftime("%Y-%m-%d")
+    r = api_football("fixtures", {"date": bugun})
+    if not r: return []
+    simdi = datetime.now()
+    maclar = []
+    for f in r.get("response", []):
+        try:
+            mac_saati = datetime.fromisoformat(f["fixture"]["date"].replace("Z", "+00:00"))
+            mac_saati_local = mac_saati.replace(tzinfo=None) + timedelta(hours=3)  # TR saati
+            fark = (mac_saati_local - simdi).total_seconds() / 60
+            if 0 < fark <= dakika_araligi:
+                maclar.append(f)
+        except: continue
+    return maclar
+
+def mac_istatistik_al(fixture_id):
+    r = api_football("fixtures/statistics", {"fixture": fixture_id})
+    if not r: return None
+    return r.get("response", [])
+
+def mac_sakatlik_al(fixture_id):
+    r = api_football("injuries", {"fixture": fixture_id})
+    if not r: return None
+    return r.get("response", [])
+
+def h2h_al(team1, team2):
+    r = api_football("fixtures/headtohead", {"h2h": f"{team1}-{team2}", "last": 5})
+    if not r: return None
+    return r.get("response", [])
+
+def puan_durumu_al(league_id, season):
+    r = api_football("standings", {"league": league_id, "season": season})
+    if not r: return None
+    resp = r.get("response", [])
+    if resp and resp[0].get("league", {}).get("standings"):
+        return resp[0]["league"]["standings"][0]
     return None
 
 # ==========================================
-# HIBRIT SL/TP KIRPMA
+# ISTATISTIK OZETLEME
 # ==========================================
-def kirp_sl_tp(sembol, giris, gemini_sl, gemini_tp1, gemini_tp2):
-    try:
-        giris_f = float(str(giris).replace(",", "."))
-        sl_f = float(str(gemini_sl).replace(",", "."))
-        tp1_f = float(str(gemini_tp1).replace(",", "."))
-        tp2_f = float(str(gemini_tp2).replace(",", "."))
-    except (ValueError, TypeError):
-        return None
+def istatistik_ozetle(stats):
+    """API'den gelen istatistik dizisini ozetle."""
+    if not stats: return {}
+    sonuc = {}
+    for takim in stats:
+        takim_adi = takim.get("team", {}).get("name", "?")
+        sonuc[takim_adi] = {}
+        for s in takim.get("statistics", []):
+            tip = s.get("type", "")
+            deger = s.get("value")
+            if deger is not None:
+                sonuc[takim_adi][tip] = deger
+    return sonuc
 
-    atr = SYMBOL_ATR.get(sembol, VARSAYILAN_ATR)
-    min_mesafe = atr * MIN_ATR_CARPAN
-    max_mesafe = atr * MAX_ATR_CARPAN
+def h2h_ozetle(h2h_list):
+    if not h2h_list: return "H2H verisi yok"
+    satirlar = []
+    for m in h2h_list[:5]:
+        try:
+            ev = m["teams"]["home"]["name"]
+            dep = m["teams"]["away"]["name"]
+            skor = f"{m['goals']['home']}-{m['goals']['away']}"
+            tarih = m["fixture"]["date"][:10]
+            satirlar.append(f"{tarih}: {ev} {skor} {dep}")
+        except: continue
+    return "\n".join(satirlar) if satirlar else "H2H verisi yok"
 
-    gemini_sl_mesafe = abs(giris_f - sl_f)
-    gemini_tp1_mesafe = abs(giris_f - tp1_f)
-    gemini_tp2_mesafe = abs(giris_f - tp2_f)
+def sakatlik_ozetle(inj_list, team_id):
+    if not inj_list: return "Sakatlik bilgisi yok"
+    satirlar = []
+    for i in inj_list:
+        try:
+            if i["team"]["id"] != team_id: continue
+            oyuncu = i["player"]["name"]
+            sebep = i["player"].get("reason", "?")
+            satirlar.append(f"{oyuncu} ({sebep})")
+        except: continue
+    return ", ".join(satirlar) if satirlar else "Sakat oyuncu yok"
 
-    sl_kirp = max(min_mesafe, min(gemini_sl_mesafe, max_mesafe))
-    tp1_kirp = max(min_mesafe, min(gemini_tp1_mesafe, max_mesafe))
-    tp2_kirp = max(min_mesafe, min(gemini_tp2_mesafe, max_mesafe * 1.5))
+# ==========================================
+# GEMINI
+# ==========================================
+def gemini_istek_at(payload):
+    global SON_ISTEK_ZAMANI
+    with GEMINI_LOCK:
+        gecen = time.time() - SON_ISTEK_ZAMANI[0]
+        if gecen < MIN_ISTEK_ARASI:
+            time.sleep(MIN_ISTEK_ARASI - gecen)
+        headers = {"Content-Type": "application/json", "x-goog-api-key": GEMINI_API_KEY}
+        resp = requests.post(GEMINI_URL, headers=headers, json=payload, timeout=300)
+        SON_ISTEK_ZAMANI[0] = time.time()
+        return resp
 
-    return {
-        "giris": round(giris_f, 2),
-        "atr": atr,
-        "min_mesafe": round(min_mesafe, 2),
-        "max_mesafe": round(max_mesafe, 2),
-        "sl_mesafe": round(sl_kirp, 2),
-        "tp1_mesafe": round(tp1_kirp, 2),
-        "tp2_mesafe": round(tp2_kirp, 2),
-        "gemini_sl_mesafe": round(gemini_sl_mesafe, 2),
-        "gemini_tp1_mesafe": round(gemini_tp1_mesafe, 2),
-        "gemini_tp2_mesafe": round(gemini_tp2_mesafe, 2),
-        "sl_kirpildi": abs(sl_kirp - gemini_sl_mesafe) > 1,
-        "tp1_kirpildi": abs(tp1_kirp - gemini_tp1_mesafe) > 1,
-        "tp2_kirpildi": abs(tp2_kirp - gemini_tp2_mesafe) > 1,
+MAC_ANALIZ_PROMPT = """Sen dunyanin en iyi futbol analiz uzmanisin. Bahis kuponu icin TEK bir maci analiz edeceksin.
+
+=== MAC BILGILERI ===
+Lig: {lig}
+Mac: {ev_sahibi} vs {deplasman}
+Durum: {durum}
+Skor: {skor}
+Dakika: {dakika}
+
+=== CANLI ISTATISTIKLER ===
+{istatistikler}
+
+=== SAKATLIKLAR ===
+{ev_sakat}
+{dep_sakat}
+
+=== SON 5 MAC (H2H) ===
+{h2h}
+
+=== PUAN DURUMU (ozet) ===
+{puan_durumu}
+
+=== GOREV ===
+Bu mac icin EN IYI bahis tercihini sec. Su bahis turlerinden birini sec:
+
+1. Alt/Üst (ornek: 2.5 UST, 1.5 ALT)
+2. KG VAR / KG YOK
+3. Korner Alt/Üst (ornek: 8.5 UST)
+4. Sari Kart Alt/Üst (ornek: 3.5 UST)
+
+KURALLAR:
+- Skor ve dakikaya gore MANTIKLI tercih yap
+- Olasilik %55'in altindaysa bu mac icin "BEKLE" ver
+- Gerekceyi 2-3 cumle yaz
+- Olasilik ver (%55-95 arasi)
+
+=== CIKTI (SADECE JSON) ===
+{{
+  "tercih": "2.5 UST",
+  "bahis_turu": "Alt/Üst",
+  "olasilik": 72,
+  "gerekce": "...",
+  "guven": 75
+}}"""
+
+def maci_analiz_et(mac, stats, sakatliklar, h2h, puan_durumu):
+    """Tek mac icin Gemini'den tercih al."""
+    f = mac["fixture"]
+    teams = mac["teams"]
+    goals = mac["goals"]
+    lig = mac["league"]["name"]
+    ev_id = teams["home"]["id"]
+    dep_id = teams["away"]["id"]
+
+    ev_sahibi = teams["home"]["name"]
+    deplasman = teams["away"]["name"]
+    durum = f["status"]["short"]
+    dakika = f["status"]["elapsed"] or 0
+    skor = f"{goals['home'] or 0}-{goals['away'] or 0}"
+
+    ist_str = ""
+    if stats:
+        ozet = istatistik_ozetle(stats)
+        for takim, veri in ozet.items():
+            ist_str += f"\n{takim}:\n"
+            for k, v in veri.items():
+                ist_str += f"  - {k}: {v}\n"
+    if not ist_str:
+        ist_str = "Canli istatistik yok"
+
+    ev_sakat = f"{ev_sahibi}: " + sakatlik_ozetle(sakatliklar, ev_id)
+    dep_sakat = f"{deplasman}: " + sakatlik_ozetle(sakatliklar, dep_id)
+    h2h_str = h2h_ozetle(h2h)
+    pd_str = puan_durumu_ozetle(puan_durumu, ev_id, dep_id)
+
+    prompt = MAC_ANALIZ_PROMPT.format(
+        lig=lig, ev_sahibi=ev_sahibi, deplasman=deplasman,
+        durum=durum, skor=skor, dakika=dakika,
+        istatistikler=ist_str, ev_sakat=ev_sakat, dep_sakat=dep_sakat,
+        h2h=h2h_str, puan_durumu=pd_str
+    )
+
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "temperature": 1.0,
+            "maxOutputTokens": 2048,
+            "responseMimeType": "application/json",
+            "responseSchema": {
+                "type": "object",
+                "properties": {
+                    "tercih": {"type": "string"},
+                    "bahis_turu": {"type": "string"},
+                    "olasilik": {"type": "integer"},
+                    "gerekce": {"type": "string"},
+                    "guven": {"type": "integer"}
+                },
+                "required": ["tercih", "bahis_turu", "olasilik", "gerekce", "guven"]
+            }
+        }
     }
 
+    resp = gemini_istek_at(payload)
+    if resp.status_code != 200:
+        print(f"Gemini hata: {resp.status_code}", flush=True)
+        return None
+    try:
+        text = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+        if "```json" in text:
+            text = text.split("```json")[1].split("```")[0]
+        a = json.loads(text)
+        return a
+    except Exception as e:
+        print(f"Gemini parse hatasi: {e}", flush=True)
+        return None
+
+def puan_durumu_ozetle(standings, ev_id, dep_id):
+    if not standings: return "Puan durumu yok"
+    satirlar = []
+    for s in standings:
+        try:
+            if s["team"]["id"] in (ev_id, dep_id):
+                satirlar.append(f"{s['team']['name']}: {s['rank']}. sira, {s['points']} puan")
+        except: continue
+    return "\n".join(satirlar) if satirlar else "Puan durumu yok"
+
 # ==========================================
-# RATE LIMIT
+# TELEGRAM
 # ==========================================
-USER_COOLDOWN = {}
-RATE_LIMIT_SECONDS = 10
+def send_msg(cid, text, parse_mode=None, reply_markup=None):
+    try:
+        p = {"chat_id": cid, "text": text}
+        if parse_mode: p["parse_mode"] = parse_mode
+        if reply_markup: p["reply_markup"] = reply_markup
+        r = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+                          json=p, timeout=15)
+        return r.json().get("result", {}).get("message_id")
+    except Exception as e:
+        print(f"send_msg: {e}", flush=True); return None
+
+def edit_reply_markup(cid, mid, rm=None):
+    try:
+        requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/editMessageReplyMarkup",
+                      json={"chat_id": cid, "message_id": mid,
+                            "reply_markup": rm or {"inline_keyboard": []}}, timeout=10)
+    except: pass
+
+def edit_message_text(cid, mid, text, pm=None, rm=None):
+    try:
+        p = {"chat_id": cid, "message_id": mid, "text": text}
+        if pm: p["parse_mode"] = pm
+        if rm: p["reply_markup"] = rm
+        requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/editMessageText",
+                      json=p, timeout=10)
+    except: pass
 
 def check_rate_limit(cid):
     now = time.time()
     last = USER_COOLDOWN.get(cid, 0)
     if now - last < RATE_LIMIT_SECONDS:
         kalan = int(RATE_LIMIT_SECONDS - (now - last))
-        send_msg(cid, f"⏳ Çok hızlı gönderiyorsunuz. {kalan} saniye bekleyin.")
+        send_msg(cid, f"⏳ Çok hızlı. {kalan // 60} dk {kalan % 60} sn bekleyin.")
         return False
     USER_COOLDOWN[cid] = now
     return True
 
 # ==========================================
-# GEMINI ISTEK YONETICISI
+# KUPON OLUSTURMA
 # ==========================================
-def gemini_istek_at(url, payload, headers):
-    global SON_ISTEK_ZAMANI
-    with GEMINI_LOCK:
-        gecen = time.time() - SON_ISTEK_ZAMANI[0]
-        if gecen < MIN_ISTEK_ARASI:
-            time.sleep(MIN_ISTEK_ARASI - gecen)
-        resp = requests.post(url, headers=headers, json=payload, timeout=300)
-        SON_ISTEK_ZAMANI[0] = time.time()
-        return resp
+def oran_tahmin(olasilik):
+    """Olasiliktan yaklasik oran."""
+    if olasilik <= 0: return 1.0
+    return round(1 / (olasilik / 100.0), 2)
 
-# ==========================================
-# GEMINI ANALIZ
-# ==========================================
-def analyze_chart(images_bytes_list, cid, sembol, coklu=False):
-    print(f"Analiz basladi (Sembol: {sembol}, Gorsel: {len(images_bytes_list)}, Coklu: {coklu})", flush=True)
+def kupon_olustur(cid):
+    send_msg(cid, "🔍 Maçlar taranıyor... (Bu 1-2 dakika sürebilir)")
 
-    atr = SYMBOL_ATR.get(sembol, VARSAYILAN_ATR)
-    min_sl = int(atr * MIN_ATR_CARPAN)
-    max_sl = int(atr * MAX_ATR_CARPAN)
+    maclar = canli_maclari_al()
+    print(f"Canli mac sayisi: {len(maclar)}", flush=True)
 
-    template = PROMPT_TEMPLATE_MULTI if coklu else PROMPT_TEMPLATE
-    prompt_text = template.format(sembol=sembol, atr=atr, min_sl=min_sl, max_sl=max_sl)
+    if len(maclar) < 3:
+        yaklasan = yaklasan_maclari_al(60)
+        print(f"Yaklasan mac sayisi: {len(yaklasan)}", flush=True)
+        maclar += yaklasan
 
-    parts = [{"text": prompt_text}]
+    if len(maclar) < 3:
+        send_msg(cid, "❌ Şu an uygun maç bulunamadı. Biraz sonra tekrar deneyin.")
+        return
 
-    for img_bytes in images_bytes_list:
-        img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
-        img.thumbnail((1600, 1600))
-        buf = io.BytesIO()
-        img.save(buf, format="JPEG", quality=95)
-        b64 = base64.b64encode(buf.getvalue()).decode()
-        del img, buf
-        parts.append({"inline_data": {"mime_type": "image/jpeg", "data": b64}})
-        del b64
+    # Oncelik: canli + 70. dk yakini
+    def oncelik(m):
+        return m["fixture"]["status"]["elapsed"] or 0
 
-    payload = {
-        "contents": [{"parts": parts}],
-        "generationConfig": {
-            "temperature": 1.0,
-            "maxOutputTokens": 16384,
-            "thinkingConfig": {"thinkingLevel": "high"},
-            "responseMimeType": "application/json",
-            "responseSchema": {
-                "type": "object",
-                "properties": {
-                    "sembol": {"type": "string"},
-                    "yon": {"type": "string", "enum": ["LONG", "SHORT", "BEKLE"]},
-                    "guven": {"type": "integer"},
-                    "giris": {"type": "string"},
-                    "stop_loss": {"type": "string"},
-                    "take_profit": {"type": "array", "items": {"type": "string"}},
-                    "trend_m1": {"type": "string"},
-                    "vwap_durumu": {"type": "string"},
-                    "fvg_tespit": {"type": "string"},
-                    "likidite_durumu": {"type": "string"},
-                    "destekler": {"type": "array", "items": {"type": "string"}},
-                    "direncler": {"type": "array", "items": {"type": "string"}},
-                    "formasyonlar": {"type": "array", "items": {"type": "string"}},
-                    "kullanilan_teknikler": {"type": "array", "items": {"type": "string"}},
-                    "kisa_analiz": {"type": "string"},
-                    "gerekce": {"type": "string"},
-                    "yol_puani": {"type": "array", "items": {"type": "number"}},
-                    "kalan_mum": {"type": "integer"},
-                    "mum_yonu": {"type": "string"},
-                    "hareket_aciklamasi": {"type": "string"},
-                    "sonraki_hamle": {"type": "string"},
-                    "uyari": {"type": "string"},
-                    "m1_bolge": {
-                        "type": "object",
-                        "properties": {
-                            "x": {"type": "integer"},
-                            "y": {"type": "integer"},
-                            "w": {"type": "integer"},
-                            "h": {"type": "integer"}
-                        }
-                    }
-                },
-                "required": ["sembol", "yon", "guven", "giris", "stop_loss", "take_profit",
-                             "kisa_analiz", "gerekce", "yol_puani", "kalan_mum",
-                             "mum_yonu", "hareket_aciklamasi", "m1_bolge"]
-            }
-        }
-    }
+    maclar.sort(key=oncelik, reverse=True)
+    secilenler = maclar[:8]  # 8 mac dene, 3 tanesi tutsun
 
-    headers = {"Content-Type": "application/json", "x-goog-api-key": GEMINI_API_KEY}
+    kupon_maclar = []
+    for mac in secilenler:
+        if len(kupon_maclar) >= 3:
+            break
 
-    bekleme_siralama = [5, 15, 30]
-    max_deneme = len(bekleme_siralama) + 1
+        f = mac["fixture"]
+        teams = mac["teams"]
+        fid = f["id"]
+        lig_id = mac["league"]["id"]
+        sezon = mac["league"]["season"]
 
-    for deneme in range(max_deneme):
-        try:
-            resp = gemini_istek_at(GEMINI_URL, payload, headers)
-            print(f"Gemini HTTP = {resp.status_code} (Deneme {deneme+1}/{max_deneme})", flush=True)
+        ist = mac_istatistik_al(fid)
+        sak = mac_sakatlik_al(fid)
+        h2h = h2h_al(teams["home"]["id"], teams["away"]["id"])
+        pd = puan_durumu_al(lig_id, sezon)
 
-            if resp.status_code == 200:
-                a = json_parse_et(resp, cid)
-                if a:
-                    print(f"Analiz basarili", flush=True)
-                    return a
-                else:
-                    return None
+        analiz = maci_analiz_et(mac, ist, sak, h2h, pd)
+        if not analiz:
+            continue
 
-            elif resp.status_code in (429, 503):
-                if deneme < max_deneme - 1:
-                    bekleme = bekleme_siralama[deneme]
-                    send_msg(cid, f"⏳ Model yoğun. {bekleme} sn sonra tekrar... ({deneme+1}/{max_deneme})")
-                    time.sleep(bekleme)
-                    continue
-                else:
-                    send_msg(cid, "❌ Model şu an yanıt vermiyor. Lütfen biraz sonra tekrar deneyin.")
-                    return None
-            else:
-                send_msg(cid, f"❌ Gemini Hatası ({resp.status_code}): {resp.text[:400]}")
-                return None
-        except Exception as e:
-            send_msg(cid, f"❌ Analiz Hatası: {str(e)[:200]}")
-            return None
+        if analiz.get("olasilik", 0) < 55:
+            continue
 
-    return None
+        oran = oran_tahmin(analiz["olasilik"])
+        kupon_maclar.append({
+            "mac": mac,
+            "analiz": analiz,
+            "oran": oran
+        })
+        print(f"✅ {teams['home']['name']} vs {teams['away']['name']} - {analiz['tercih']}", flush=True)
 
-def json_parse_et(resp, cid):
-    r = resp.json()
-    try:
-        text = r["candidates"][0]["content"]["parts"][0]["text"].strip()
-    except (KeyError, IndexError):
-        try:
-            fr = r["candidates"][0].get("finishReason", "?")
-        except:
-            fr = "?"
-        print(f"Bos cevap. finishReason={fr}", flush=True)
-        send_msg(cid, f"❌ Gemini boş cevap döndü. (Sebep: {fr})")
-        return None
+    if len(kupon_maclar) < 3:
+        send_msg(cid, f"❌ Yeterli uygun maç bulunamadı ({len(kupon_maclar)}/3).")
+        return
 
-    if "```json" in text:
-        text = text.split("```json")[1].split("```")[0]
-    elif "```" in text:
-        p = text.split("```")
-        if len(p) >= 2:
-            text = p[1]
-            if text.startswith("json"):
-                text = text[4:]
-    text = text.strip()
+    # Toplam oran
+    toplam_oran = 1.0
+    for km in kupon_maclar:
+        toplam_oran *= km["oran"]
+    toplam_oran = round(toplam_oran, 2)
 
-    a = None
-    try:
-        a = json.loads(text)
-    except json.JSONDecodeError:
-        bas = text.find('{')
-        son = text.rfind('}')
-        if bas != -1 and son > bas:
-            try:
-                a = json.loads(text[bas:son+1])
-            except Exception as e2:
-                print(f"Kurtarma basarisiz: {e2}", flush=True)
-                send_msg(cid, "❌ Gemini cevabı bozuk JSON.")
-                return None
-        else:
-            try:
-                fr = r["candidates"][0].get("finishReason", "?")
-            except:
-                fr = "?"
-            print(f"JSON YOK. finishReason={fr}", flush=True)
-            send_msg(cid, f"❌ Gemini JSON vermedi. (Sebep: {fr})")
-            return None
+    # 3.0 altindaysa biraz riskli olanlari ekleyip oran artirmayi dene
+    if toplam_oran < 3.0:
+        # En dusuk olasiligi olan maci alternatifle degistirmek yerine
+        # kullanicinin bildirimine ek olarak "daha yuksek oran icin /riskli" mesaji
+        pass
 
-    if "giris" in a:
-        a["giris"] = temizle_sayi(a["giris"])
-    if "stop_loss" in a:
-        a["stop_loss"] = temizle_sayi(a["stop_loss"])
-    if "take_profit" in a and isinstance(a["take_profit"], list):
-        a["take_profit"] = [temizle_sayi(x) for x in a["take_profit"]]
+    ort_guven = round(sum(km["analiz"]["guven"] for km in kupon_maclar) / len(kupon_maclar))
 
-    try:
-        g = int(a.get("guven", 0))
-    except:
-        g = 0
-    if g < 65:
-        a["yon"] = "BEKLE"
-
-    try:
-        km = int(a.get("kalan_mum", 1))
-        if km < 1:
-            km = 1
-        if km > 3:
-            km = 3
-        a["kalan_mum"] = km
-    except:
-        a["kalan_mum"] = 1
-
-    print(f"M1 bolge: {a.get('m1_bolge')} | Yon: {a.get('yon')} | Giris: {a.get('giris')}", flush=True)
-    return a
-
-# ==========================================
-# PROJEKSIYON CIZIMI
-# ==========================================
-def draw_projection(img_bytes, yon, puanlar, sembol="XAU/USD", m1_bolge=None):
-    img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
-    W, H = img.size
-    draw = ImageDraw.Draw(img)
-
-    if yon == "LONG":
-        renk = (0, 220, 0)
-    elif yon == "SHORT":
-        renk = (230, 30, 30)
-    else:
-        return None
-
-    temiz = validate_yol_puani(puanlar)
-    if not temiz:
-        return None
-
-    if yon == "SHORT":
-        if temiz[0] < temiz[-1]:
-            temiz = temiz[::-1]
-            print("SHORT icin yol_puani ters cevrildi", flush=True)
-    elif yon == "LONG":
-        if temiz[0] > temiz[-1]:
-            temiz = temiz[::-1]
-            print("LONG icin yol_puani ters cevrildi", flush=True)
-
-    if m1_bolge and all(k in m1_bolge for k in ["x", "y", "w", "h"]):
-        try:
-            bx = int(W * float(m1_bolge["x"]) / 100)
-            by = int(H * float(m1_bolge["y"]) / 100)
-            bw = int(W * float(m1_bolge["w"]) / 100)
-            bh = int(H * float(m1_bolge["h"]) / 100)
-            bx = max(0, min(bx, W - 50))
-            by = max(0, min(by, H - 50))
-            bw = max(50, min(bw, W - bx))
-            bh = max(50, min(bh, H - by))
-            print(f"M1 piksel bolge: x={bx} y={by} w={bw} h={bh}", flush=True)
-        except Exception as ex:
-            print(f"M1 bolge parse hatasi: {ex}", flush=True)
-            bx, by, bw, bh = 0, 0, W, H
-    else:
-        bx, by, bw, bh = 0, 0, W, H
-
-    x1 = bx + int(bw * 0.80)
-    x2 = bx + int(bw * 0.98)
-    y_top = by + int(bh * 0.15)
-    y_bot = by + int(bh * 0.85)
-
-    n = len(temiz)
-    noktalar = []
-    for i, p in enumerate(temiz):
-        x = x1 + (x2 - x1) * i / (n - 1)
-        y = y_bot - (p / 100.0) * (y_bot - y_top)
-        noktalar.append((x, y))
-
-    for i in range(len(noktalar) - 1):
-        draw.line([noktalar[i], noktalar[i+1]], fill=renk, width=6)
-
-    (xa, ya), (xe, ye) = noktalar[-2], noktalar[-1]
-    angle = math.atan2(ye - ya, xe - xa)
-    arrow_len = 30
-    arrow_angle = math.pi / 6
-    p1 = (xe, ye)
-    p2 = (xe - arrow_len * math.cos(angle - arrow_angle), ye - arrow_len * math.sin(angle - arrow_angle))
-    p3 = (xe - arrow_len * math.cos(angle + arrow_angle), ye - arrow_len * math.sin(angle + arrow_angle))
-    draw.polygon([p1, p2, p3], fill=renk)
-    draw.ellipse([noktalar[0][0]-6, noktalar[0][1]-6, noktalar[0][0]+6, noktalar[0][1]+6], fill=renk)
-
-    font_size = max(20, int(bh * 0.035))
-    try:
-        font = ImageFont.truetype("arial.ttf", font_size)
-    except:
-        try:
-            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", font_size)
-        except:
-            font = ImageFont.load_default()
-
-    draw.text((bx + 20, by + bh - 60), f"{sembol} | {yon} | 2 Dk Projeksiyon", fill=renk, font=font)
-
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    return buf.getvalue()
-
-# ==========================================
-# MESAJ KARTI
-# ==========================================
-def build_card(a, sembol="XAU/USD", coklu=False):
-    yon_emoji = {"LONG": "🟢", "SHORT": "🔴", "BEKLE": "🟡"}
-    e = yon_emoji.get(a.get("yon", "BEKLE"), "⚪")
+    # Kupon mesaji
     t = []
-    t.append("╔══════════════════════════╗")
-    baslik = f"📊 {sembol} ANALİZİ" + (" (M30+M15+M1)" if coklu else "")
-    t.append(f"║  {baslik}")
-    t.append("╠══════════════════════════╣")
-    t.append(f"║  {e} YÖN: {a.get('yon','?')}")
-    t.append(f"║  🎯 GÜVEN: %{a.get('guven','?')}")
-    t.append("╠══════════════════════════╣")
-
-    if a.get("yon") != "BEKLE":
-        t.append(f"║  💰 GİRİŞ: {a.get('giris','?')}")
-        t.append(f"║  🛑 SL:    {a.get('stop_loss','?')}")
-        tps = a.get("take_profit", [])
-        if tps:
-            for i, tp in enumerate(tps, 1):
-                t.append(f"║  ✅ TP{i}:   {tp}")
-        t.append(f"║  ⚖️ R/R:   {a.get('risk_odul','?')}")
-    else:
-        t.append("║  ⏸️  Sinyal yok")
-        uy = a.get("uyari", "")
-        if uy:
-            t.append(f"║  ⚠️  {str(uy)[:38]}")
-
-    t.append("╚══════════════════════════╝")
+    t.append("🎯 *CANLI MAÇ KUPONU*")
+    t.append(f"⏰ {datetime.now().strftime('%d.%m.%Y - %H:%M')}")
+    t.append("━━━━━━━━━━━━━━━━━━━━━━")
     t.append("")
-    t.append("📈 TREND ANALİZİ")
-    t.append(f"• M1:  {a.get('trend_m1','?')}")
 
-    vwap = a.get("vwap_durumu", "")
-    if vwap and vwap.lower() not in ["belirsiz", ""]:
-        t.append(f"• VWAP: {vwap}")
+    for i, km in enumerate(kupon_maclar, 1):
+        m = km["mac"]
+        a = km["analiz"]
+        teams = m["teams"]
+        goals = m["goals"]
+        dakika = m["fixture"]["status"]["elapsed"] or 0
+        skor = f"{goals['home'] or 0}-{goals['away'] or 0}"
 
-    t.append("")
-    t.append("🎯 SEVİYELER")
-    destekler = a.get("destekler", [])
-    direncler = a.get("direncler", [])
-    t.append(f"🟢 Destek: {', '.join(map(str, destekler)) if destekler else 'Belirsiz'}")
-    t.append(f"🔴 Direnç: {', '.join(map(str, direncler)) if direncler else 'Belirsiz'}")
-
-    fvg = a.get("fvg_tespit", "")
-    likidite = a.get("likidite_durumu", "")
-    sm = []
-    if fvg and fvg.lower() not in ["yok", "belirsiz", ""]:
-        sm.append(f"📦 FVG: {fvg}")
-    if likidite and likidite.lower() not in ["yok", "belirsiz", ""]:
-        sm.append(f"💧 Likidite: {likidite}")
-    if sm:
+        t.append(f"*{i}️⃣ {teams['home']['name']} - {teams['away']['name']}*")
+        t.append(f"⏱️ {dakika}' | Skor: {skor}")
+        t.append(f"⚽ Tercih: *{a['tercih']}*")
+        t.append(f"📊 Olasılık: %{a['olasilik']}")
+        t.append(f"💰 Oran: {km['oran']}")
+        t.append(f"📝 {a['gerekce']}")
         t.append("")
-        t.append("🧠 SMART MONEY")
-        for s in sm:
-            t.append(s)
-
-    formasyonlar = a.get("formasyonlar", [])
-    if formasyonlar:
+        t.append("━━━━━━━━━━━━━━━━━━━━━━")
         t.append("")
-        t.append(f"🧩 Formasyon: {', '.join(map(str, formasyonlar))}")
 
-    kalan = a.get("kalan_mum", 0)
-    mum_yonu = a.get("mum_yonu", "")
-    hareket = a.get("hareket_aciklamasi", "")
-    sonraki = a.get("sonraki_hamle", "")
+    t.append(f"📈 *TOPLAM ORAN: {toplam_oran}*")
+    t.append(f"⭐ *GENEL GÜVEN: %{ort_guven}*")
 
-    if kalan or hareket:
-        t.append("")
-        t.append("⏱️ MUM TAHMİNİ")
-        if hareket:
-            t.append(f"• {hareket}")
-        elif kalan and mum_yonu:
-            t.append(f"• {mum_yonu.capitalize()} yönünde ~{kalan} mum")
-        if sonraki:
-            t.append(f"• Sonrası: {sonraki}")
-
+    # Oneri miktar
+    miktar = 100
+    kazanc = round(miktar * toplam_oran)
+    t.append(f"🎲 ÖNERİLEN: {miktar} TL")
+    t.append(f"💵 OLASI KAZANÇ: {kazanc} TL")
     t.append("")
-    t.append("📝 ÖZET")
-    t.append(a.get('kisa_analiz', ''))
-    t.append("")
-    t.append("🔍 GEREKÇELER")
-    gerekce_text = str(a.get("gerekce", "")).replace("\\n", "\n")
-    for g in gerekce_text.split("\n"):
-        if g.strip():
-            t.append(f"• {g.strip()}")
+    t.append("⚠️ Yatırım tavsiyesi değildir.")
 
-    t.append("")
-    t.append(f"⚠️ {a.get('uyari','Yatırım tavsiyesi değildir.')}")
-    return "\n".join(t)
+    metin = "\n".join(t)
+
+    # Kaydet
+    maclar_json = json.dumps([{
+        "mac": f"{km['mac']['teams']['home']['name']} - {km['mac']['teams']['away']['name']}",
+        "tercih": km["analiz"]["tercih"],
+        "oran": km["oran"],
+        "olasilik": km["analiz"]["olasilik"]
+    } for km in kupon_maclar], ensure_ascii=False)
+
+    kid = save_kupon(cid, maclar_json, toplam_oran, ort_guven)
+
+    rm = None
+    if kid:
+        rm = {"inline_keyboard": [[
+            {"text": "✅ Tuttu", "callback_data": f"sonuc:tuttu:{kid}"},
+            {"text": "❌ Tutmadı", "callback_data": f"sonuc:tutmadi:{kid}"}
+        ]]}
+
+    send_msg(cid, metin, "Markdown", rm)
 
 # ==========================================
-# MENU FONKSIYONLARI
+# MENU
 # ==========================================
 def _ana_menu_buton():
     return {"inline_keyboard": [[{"text": "🔙 Ana Menü", "callback_data": "menu:ana"}]]}
 
 def _menu_keyboard():
-    return {
-        "inline_keyboard": [
-            [
-                {"text": "📜 Geçmiş", "callback_data": "menu:gecmis"},
-                {"text": "📊 İstatistik", "callback_data": "menu:istatistik"}
-            ],
-            [
-                {"text": "📋 Semboller", "callback_data": "menu:semboller"},
-                {"text": "❓ Yardım", "callback_data": "menu:yardim"}
-            ]
-        ]
-    }
+    return {"inline_keyboard": [
+        [{"text": "🎯 Kupon Al", "callback_data": "menu:kupon"}],
+        [{"text": "📜 Geçmiş", "callback_data": "menu:gecmis"},
+         {"text": "📊 İstatistik", "callback_data": "menu:istatistik"}],
+        [{"text": "❓ Yardım", "callback_data": "menu:yardim"}]
+    ]}
 
 def _menu_text():
-    return (
-        "🤖 *CHIVAS MT5 ANALİZ BOTU*\n\n"
-        "📸 *Nasıl analiz yaparım?*\n"
-        "• Tek fotoğraf (M1) → caption: `PainX 999`\n"
-        "• Albüm (M30+M15+M1) → 3 foto tek seferde, caption: `PainX 999`\n\n"
-        "⬇️ Aşağıdaki butonlardan seç:"
-    )
+    return ("🤖 *MAÇ KUPON BOTU*\n\n"
+            "🎯 /start yazarak **3 maçlık kupon** al\n"
+            "📊 Canlı maçlar (1-70. dk)\n"
+            "🔮 Yaklaşan maçlar (sonraki 60 dk)\n"
+            "🧠 Gemini 3.1 Pro analizi\n\n"
+            "⬇️ Menüden seç:")
 
-def show_menu(cid, message_id=None):
-    if message_id:
-        edit_message_text(cid, message_id, _menu_text(), "Markdown", _menu_keyboard())
-    else:
-        send_msg(cid, _menu_text(), "Markdown", _menu_keyboard())
+def show_menu(cid, mid=None):
+    if mid: edit_message_text(cid, mid, _menu_text(), "Markdown", _menu_keyboard())
+    else: send_msg(cid, _menu_text(), "Markdown", _menu_keyboard())
 
-def show_gecmis(cid, message_id=None):
+def show_gecmis(cid, mid=None):
     rows = get_gecmis(cid, 10)
     if not rows:
-        text = "📭 *Geçmiş boş*\n\nHenüz analiz yapmadın. Bir fotoğraf at, başlayalım!"
+        text = "📭 *Geçmiş boş*"
     else:
-        e = {"LONG": "🟢", "SHORT": "🔴", "BEKLE": "🟡"}
         s = {"tuttu": "✅", "tutmadi": "❌", None: "⏳"}
-        satirlar = ["📜 *SON 10 ANALİZ*", ""]
-        for i, (aid, sembol, yon, guven, sonuc, ts) in enumerate(rows, 1):
-            tarih = time.strftime("%d.%m %H:%M", time.localtime(ts))
-            e_ = e.get(yon, "⚪")
-            s_ = s.get(sonuc, "?")
-            satirlar.append(f"{i}. {e_} *{sembol}* — {yon} — %{guven}")
-            satirlar.append(f"     {s_} {tarih}")
-        text = "\n".join(satirlar)
+        sat = ["📜 *SON 10 KUPON*", ""]
+        for i, (kid, tarih, oran, guven, sonuc) in enumerate(rows, 1):
+            sat.append(f"{i}. Oran: *{oran}* | Güven: %{guven}")
+            sat.append(f"     {s.get(sonuc,'?')} {tarih}")
+        text = "\n".join(sat)
+    if mid: edit_message_text(cid, mid, text, "Markdown", _ana_menu_buton())
+    else: send_msg(cid, text, "Markdown", _ana_menu_buton())
 
-    if message_id:
-        edit_message_text(cid, message_id, text, "Markdown", _ana_menu_buton())
-    else:
-        send_msg(cid, text, "Markdown", _ana_menu_buton())
-
-def show_istatistik(cid, message_id=None):
+def show_istatistik(cid, mid=None):
     st = get_istatistik(cid)
     if st["total"] == 0:
-        text = "📭 *İstatistik yok*\n\nAnaliz yap ve ✅/❌ ile işaretle."
+        text = "📭 *İstatistik yok*"
     else:
-        sonuclanan = st["tuttu"] + st["tutmadi"]
-        oran = round(st["tuttu"] / sonuclanan * 100, 1) if sonuclanan > 0 else 0
-        satirlar = [
-            "📊 *İSTATİSTİK*", "",
-            f"📈 Toplam sinyal: *{st['total']}*",
-            f"✅ Tuttu: *{st['tuttu']}*",
-            f"❌ Tutmadı: *{st['tutmadi']}*",
-            f"🎯 Başarı oranı: *%{oran}*",
-        ]
-        if st["semboller"]:
-            satirlar.append("")
-            satirlar.append("📋 *Sembol Bazında:*")
-            for sembol, tot, tut, tutm in st["semboller"]:
-                if tut + tutm > 0:
-                    r = round(tut / (tut + tutm) * 100, 0)
-                    satirlar.append(f"• {sembol}: {tut}/{tut+tutm} (%{int(r)})")
-                else:
-                    satirlar.append(f"• {sembol}: {tot} sinyal")
-        text = "\n".join(satirlar)
+        sc = st["tuttu"] + st["tutmadi"]
+        oran = round(st["tuttu"] / sc * 100, 1) if sc > 0 else 0
+        text = (f"📊 *İSTATİSTİK*\n\n"
+                f"📈 Toplam: *{st['total']}*\n"
+                f"✅ Tuttu: *{st['tuttu']}*\n"
+                f"❌ Tutmadı: *{st['tutmadi']}*\n"
+                f"🎯 Başarı: *%{oran}*")
+    if mid: edit_message_text(cid, mid, text, "Markdown", _ana_menu_buton())
+    else: send_msg(cid, text, "Markdown", _ana_menu_buton())
 
-    if message_id:
-        edit_message_text(cid, message_id, text, "Markdown", _ana_menu_buton())
-    else:
-        send_msg(cid, text, "Markdown", _ana_menu_buton())
-
-def show_semboller(cid, message_id=None):
-    lines = ["📋 *DESTEKLENEN 16 SEMBOL*", ""]
-    for s in ALLOWED_SYMBOLS:
-        a = SYMBOL_ATR.get(s, VARSAYILAN_ATR)
-        lines.append(f"• {s} — ATR: {a} puan")
-    text = "\n".join(lines)
-    if message_id:
-        edit_message_text(cid, message_id, text, "Markdown", _ana_menu_buton())
-    else:
-        send_msg(cid, text, "Markdown", _ana_menu_buton())
-
-def show_yardim(cid, message_id=None):
-    sembol_listesi = "\n".join([f"• `{s}`" for s in ALLOWED_SYMBOLS])
-    text = (
-        "❓ *YARDIM*\n\n"
-        "📸 *Analiz nasıl yapılır?*\n"
-        "1. MT5'te grafiği aç (tek M1 veya M30+M15+M1 bölünmüş)\n"
-        "2. Screenshot al\n"
-        "3. Bota gönder\n"
-        "4. Caption'a sembolü yaz (örn: `PainX 999`)\n\n"
-        "📸 *Albüm (Çoklu TF):*\n"
-        "• 3 fotoğrafı tek seferde seç\n"
-        "• Sıra: M30 → M15 → M1\n"
-        "• Caption birine ekle\n\n"
-        "━━━━━━━━━━━━━━━━━━━\n"
-        "📋 *DESTEKLENEN 16 SEMBOL*\n"
-        "━━━━━━━━━━━━━━━━━━━\n\n"
-        + sembol_listesi + "\n\n"
-        "🎯 *Sonuç işaretleme:*\n"
-        "Analizden sonra ✅ Tuttu / ❌ Tutmadı butonuna bas\n\n"
-        "📊 *Komutlar:*\n"
-        "/menu — Menü\n"
-        "/gecmis — Geçmiş\n"
-        "/istatistik — Başarı oranı\n"
-        "/semboller — Sembol listesi\n\n"
-        "⚠️ Yatırım tavsiyesi değildir."
-    )
-    if message_id:
-        edit_message_text(cid, message_id, text, "Markdown", _ana_menu_buton())
-    else:
-        send_msg(cid, text, "Markdown", _ana_menu_buton())
+def show_yardim(cid, mid=None):
+    text = ("❓ *YARDIM*\n\n"
+            "🎯 /start — Kupon al\n"
+            "📜 /gecmis — Son kuponlar\n"
+            "📊 /istatistik — Başarı oranı\n\n"
+            "📌 *Bot ne yapar?*\n"
+            "• Canlı maçları tarar (1-70. dk)\n"
+            "• Yaklaşan maçları tarar (sonraki 60 dk)\n"
+            "• Her maç için istatistik/sakatlık/H2H/puan analizi\n"
+            "• Gemini 3.1 Pro ile tercih üretir\n"
+            "• 3 maçlık kupon oluşturur\n\n"
+            "⚠️ Yatırım tavsiyesi değildir.")
+    if mid: edit_message_text(cid, mid, text, "Markdown", _ana_menu_buton())
+    else: send_msg(cid, text, "Markdown", _ana_menu_buton())
 
 # ==========================================
 # KOMUTLAR
@@ -990,175 +619,55 @@ def handle_command(cid, text):
     text = (text or "").strip()
     cmd = text.split()[0].lower() if text else ""
 
-    if cmd in ("/menu", "/start"):
+    if cmd == "/start":
         show_menu(cid)
         return
-    if cmd == "/yardim":
-        show_yardim(cid)
+    if cmd == "/kupon":
+        if not check_rate_limit(cid): return
+        threading.Thread(target=kupon_olustur, args=(cid,), daemon=True).start()
         return
+    if cmd == "/menu":
+        show_menu(cid); return
     if cmd == "/gecmis":
-        show_gecmis(cid)
-        return
+        show_gecmis(cid); return
     if cmd == "/istatistik":
-        show_istatistik(cid)
-        return
-    if cmd == "/semboller":
-        show_semboller(cid)
-        return
-
-    send_msg(cid, "ℹ️ Fotoğraf at ve altına sembol yaz. Menü için /menu")
+        show_istatistik(cid); return
+    if cmd == "/yardim":
+        show_yardim(cid); return
+    send_msg(cid, "ℹ️ /start yazarak başlayın.")
 
 def handle_callback(cq):
     try:
         cid = cq["message"]["chat"]["id"]
-
-        if int(cid) != int(ADMIN_ID):
-            requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/answerCallbackQuery",
-                          json={"callback_query_id": cq["id"], "text": "Bu bot ozel kullanimdadir."}, timeout=10)
-            return
-
-        message_id = cq["message"]["message_id"]
+        mid = cq["message"]["message_id"]
         data = cq.get("data", "")
         cb_id = cq["id"]
-
         requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/answerCallbackQuery",
                       json={"callback_query_id": cb_id}, timeout=10)
 
-        if data == "menu:ana":
-            show_menu(cid, message_id)
-            return
-        if data == "menu:gecmis":
-            show_gecmis(cid, message_id)
-            return
-        if data == "menu:istatistik":
-            show_istatistik(cid, message_id)
-            return
-        if data == "menu:semboller":
-            show_semboller(cid, message_id)
-            return
-        if data == "menu:yardim":
-            show_yardim(cid, message_id)
+        if int(cid) != int(ADMIN_ID):
+            send_msg(cid, "🔒 Bu bot özel kullanımdadır."); return
+
+        if data == "menu:ana": show_menu(cid, mid); return
+        if data == "menu:gecmis": show_gecmis(cid, mid); return
+        if data == "menu:istatistik": show_istatistik(cid, mid); return
+        if data == "menu:yardim": show_yardim(cid, mid); return
+        if data == "menu:kupon":
+            if not check_rate_limit(cid): return
+            edit_reply_markup(cid, mid, _ana_menu_buton())
+            threading.Thread(target=kupon_olustur, args=(cid,), daemon=True).start()
             return
 
         if data.startswith("sonuc:"):
-            _, sonuc, aid_str = data.split(":")
-            aid = int(aid_str)
-            if update_sonuc(aid, sonuc):
-                edit_reply_markup(cid, message_id, None)
-                emoji = "✅" if sonuc == "tuttu" else "❌"
-                send_msg(cid, f"{emoji} Analiz #{aid} kaydedildi: {sonuc.upper()}")
+            _, sonuc, kid_str = data.split(":")
+            if update_sonuc(int(kid_str), sonuc):
+                edit_reply_markup(cid, mid, None)
+                e = "✅" if sonuc == "tuttu" else "❌"
+                send_msg(cid, f"{e} Kupon #{kid_str} kaydedildi.")
             else:
-                send_msg(cid, "⚠️ Bu analiz zaten işaretlenmiş.")
+                send_msg(cid, "⚠️ Bu kupon zaten işaretlenmiş.")
     except Exception as e:
-        print(f"callback hatasi: {e}", flush=True)
-
-# ==========================================
-# ALBUM BUFFER
-# ==========================================
-ALBUM_BUFFER = {}
-ALBUM_LOCK = threading.Lock()
-
-def buffer_album_photo(mgid, msg):
-    with ALBUM_LOCK:
-        if mgid not in ALBUM_BUFFER:
-            ALBUM_BUFFER[mgid] = {"photos": [], "ts": time.time(), "cid": msg["chat"]["id"]}
-        ALBUM_BUFFER[mgid]["photos"].append(msg)
-        ALBUM_BUFFER[mgid]["ts"] = time.time()
-
-def get_ready_albums():
-    ready = []
-    now = time.time()
-    with ALBUM_LOCK:
-        to_delete = []
-        for mgid, data in ALBUM_BUFFER.items():
-            if len(data["photos"]) >= 3 or (now - data["ts"]) >= 3.0:
-                ready.append((mgid, data))
-                to_delete.append(mgid)
-        for mgid in to_delete:
-            del ALBUM_BUFFER[mgid]
-    return ready
-
-# ==========================================
-# ANALIZ AKISI
-# ==========================================
-def process_analysis(cid, images_bytes_list, sembol, coklu):
-    send_msg(cid, f"⏳ {sembol} analiz ediliyor... ({'M30+M15+M1' if coklu else 'Tek Grafik'})")
-
-    a = analyze_chart(images_bytes_list, cid, sembol, coklu=coklu)
-    if not a:
-        send_msg(cid, "❌ Analiz başarısız, tekrar deneyin.")
-        return
-
-    if a.get("yon") in ("LONG", "SHORT"):
-        gemini_sl = a.get("stop_loss")
-        gemini_tps = a.get("take_profit") or []
-        gemini_tp1 = gemini_tps[0] if len(gemini_tps) > 0 else None
-        gemini_tp2 = gemini_tps[1] if len(gemini_tps) > 1 else None
-
-        if gemini_sl and gemini_tp1 and a.get("giris"):
-            if not gemini_tp2:
-                try:
-                    g_f = float(str(a["giris"]).replace(",", "."))
-                    tp1_f = float(str(gemini_tp1).replace(",", "."))
-                    if a["yon"] == "SHORT":
-                        gemini_tp2 = str(tp1_f - abs(g_f - tp1_f) * 0.2)
-                    else:
-                        gemini_tp2 = str(tp1_f + abs(g_f - tp1_f) * 0.2)
-                except:
-                    gemini_tp2 = gemini_tp1
-
-            hesap = kirp_sl_tp(sembol, a.get("giris"), gemini_sl, gemini_tp1, gemini_tp2)
-            if hesap:
-                giris_f = hesap["giris"]
-                if a["yon"] == "SHORT":
-                    sl = giris_f + hesap["sl_mesafe"]
-                    tp1 = giris_f - hesap["tp1_mesafe"]
-                    tp2 = giris_f - hesap["tp2_mesafe"]
-                else:
-                    sl = giris_f - hesap["sl_mesafe"]
-                    tp1 = giris_f + hesap["tp1_mesafe"]
-                    tp2 = giris_f + hesap["tp2_mesafe"]
-
-                a["giris"] = str(round(giris_f, 2))
-                a["stop_loss"] = str(round(sl, 2))
-                a["take_profit"] = [str(round(tp1, 2)), str(round(tp2, 2))]
-
-                rr = hesap["tp1_mesafe"] / hesap["sl_mesafe"] if hesap["sl_mesafe"] > 0 else 0
-                a["risk_odul"] = f"1:{round(rr, 2)}"
-
-                print(f"ATR={hesap['atr']} | Sinir={hesap['min_mesafe']}-{hesap['max_mesafe']} | Gemini SL={hesap['gemini_sl_mesafe']} TP1={hesap['gemini_tp1_mesafe']} | Kirpilmis SL={hesap['sl_mesafe']} TP1={hesap['tp1_mesafe']}", flush=True)
-            else:
-                a["yon"] = "BEKLE"
-                a["uyari"] = "SL/TP hesaplanamadi."
-        else:
-            a["yon"] = "BEKLE"
-            a["uyari"] = "SL/TP verisi eksik."
-
-    aid = save_analysis(cid, sembol, a)
-    kart = build_card(a, sembol, coklu=coklu)
-
-    reply_markup = None
-    if a.get("yon") in ("LONG", "SHORT") and aid:
-        reply_markup = {"inline_keyboard": [[
-            {"text": "✅ Tuttu", "callback_data": f"sonuc:tuttu:{aid}"},
-            {"text": "❌ Tutmadı", "callback_data": f"sonuc:tutmadi:{aid}"}
-        ]]}
-
-    gorsel = None
-    if a.get("yon") != "BEKLE":
-        gorsel = draw_projection(
-            images_bytes_list[-1], a.get("yon"),
-            a.get("yol_puani", []), sembol, m1_bolge=a.get("m1_bolge")
-        )
-
-    if gorsel:
-        if len(kart) > 1024:
-            send_photo(cid, gorsel, caption=f"{sembol} | {a.get('yon')} | %{a.get('guven')}")
-            send_msg(cid, kart, reply_markup=reply_markup)
-        else:
-            send_photo(cid, gorsel, caption=kart, reply_markup=reply_markup)
-    else:
-        send_msg(cid, kart, reply_markup=reply_markup)
+        print(f"callback: {e}", flush=True)
 
 # ==========================================
 # ANA DONGU
@@ -1166,103 +675,34 @@ def process_analysis(cid, images_bytes_list, sembol, coklu):
 def main():
     threading.Thread(target=run_health_server, daemon=True).start()
     init_db()
-    print(f"=== SENTETIK ANALIZ BOTU v30-OZEL BASLADI (16 SEMBOL, ID: {ADMIN_ID}) ===", flush=True)
+    print("=== MAC KUPON BOTU v1 BASLADI ===", flush=True)
+    print(f"API-Football key: {'VAR' if API_FOOTBALL_KEY else 'YOK'}", flush=True)
+    print(f"Gemini key: {'VAR' if GEMINI_API_KEY else 'YOK'}", flush=True)
+    print(f"Telegram token: {'VAR' if TELEGRAM_TOKEN else 'YOK'}", flush=True)
+
     offset = get_offset()
 
     while True:
         try:
             r = requests.get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates",
                              params={"offset": offset, "timeout": 30}, timeout=40).json()
-
             for u in r.get("result", []):
                 offset = u["update_id"] + 1
                 save_offset(offset)
-
                 if "callback_query" in u:
-                    handle_callback(u["callback_query"])
-                    continue
-
+                    handle_callback(u["callback_query"]); continue
                 msg = u.get("message", {})
                 cid = msg.get("chat", {}).get("id")
-                if not cid:
-                    continue
-
-                # OZEL KULLANIM KONTROLU
+                if not cid: continue
                 if int(cid) != int(ADMIN_ID):
-                    try:
-                        send_msg(cid, "🔒 *Bu bot özel kullanımdadır.*\n\nErişim izniniz yok.", parse_mode="Markdown")
-                    except:
-                        pass
+                    try: send_msg(cid, "🔒 Bu bot özel kullanımdadır.")
+                    except: pass
                     continue
-
-                if "photo" in msg:
-                    mgid = msg.get("media_group_id")
-                    if mgid:
-                        buffer_album_photo(mgid, msg)
-                    else:
-                        if not check_rate_limit(cid):
-                            continue
-                        caption = (msg.get("caption") or "").strip()
-                        sembol = caption_to_symbol(caption)
-                        if not sembol:
-                            send_msg(cid, f"⚠️ Lütfen fotoğrafın altına sembolü tam yazın.\nÖrnek: `{ALLOWED_SYMBOLS[0]}`", parse_mode="Markdown")
-                            continue
-                        try:
-                            img_bytes = get_file_bytes(msg["photo"][-1]["file_id"])
-                            process_analysis(cid, [img_bytes], sembol, coklu=False)
-                        except Exception as e:
-                            send_msg(cid, f"❌ Hata: {str(e)[:200]}")
-                    continue
-
                 text = msg.get("text", "")
-                if text:
-                    handle_command(cid, text)
-                    continue
-
-                if not text and "photo" not in msg:
-                    send_msg(cid, "ℹ️ Fotoğraf at ve altına sembol yaz. Menü için /menu")
-
-            for mgid, data in get_ready_albums():
-                try:
-                    photos = data["photos"]
-                    cid = data["cid"]
-
-                    if int(cid) != int(ADMIN_ID):
-                        continue
-
-                    if not check_rate_limit(cid):
-                        continue
-
-                    sembol = None
-                    for p in photos:
-                        cap = (p.get("caption") or "").strip()
-                        sembol = caption_to_symbol(cap)
-                        if sembol:
-                            break
-
-                    if not sembol:
-                        send_msg(cid, "⚠️ Albümdeki bir fotoğrafın altına sembolü yazın.\nÖrnek: `GainX 1200`", parse_mode="Markdown")
-                        continue
-
-                    images = []
-                    for p in photos[:3]:
-                        fid = p["photo"][-1]["file_id"]
-                        images.append(get_file_bytes(fid))
-
-                    if len(images) >= 2:
-                        process_analysis(cid, images, sembol, coklu=True)
-                    else:
-                        process_analysis(cid, images, sembol, coklu=False)
-
-                except Exception as e:
-                    print(f"Album isleme hatasi: {e}", flush=True)
-                    try:
-                        send_msg(data["cid"], f"❌ Albüm hatası: {str(e)[:200]}")
-                    except:
-                        pass
-
+                if text: handle_command(cid, text); continue
+                send_msg(cid, "ℹ️ /start yazarak başlayın.")
         except Exception as e:
-            print(f"=== LOOP HATASI: {e} ===", flush=True)
+            print(f"=== LOOP: {e} ===", flush=True)
             time.sleep(3)
 
 if __name__ == "__main__":
