@@ -332,9 +332,9 @@ Bu mac icin EN IYI bahis tercihini sec. Su bahis turlerinden birini sec:
 ONEMLI KURALLAR:
 - Sezon istatistiklerini kullan: takimlarin gol/kart/korner ortalamasini dikkate al
 - Canli istatistikleri kullan: skor, dakika, sut, korner sayisina bak
-- Olasilik %55'in altindaysa bu mac icin "BEKLE" ver
+- Olasilik %50'nin altindaysa bu mac icin "BEKLE" ver
 - Gerekceyi 2-3 cumle yaz, sadece EN ONEMLI sebebi belirt
-- Olasilik ver (%55-95 arasi)
+- Olasilik ver (%50-95 arasi)
 
 === CIKTI (SADECE JSON) ===
 {{
@@ -486,7 +486,7 @@ def kupon_olustur(cid):
         return m["fixture"]["status"]["elapsed"] or 0
 
     maclar.sort(key=oncelik, reverse=True)
-    secilenler = maclar[:8]
+    secilenler = maclar[:20]
 
     kupon_maclar = []
     for mac in secilenler:
@@ -510,7 +510,7 @@ def kupon_olustur(cid):
         if not analiz:
             continue
 
-        if analiz.get("olasilik", 0) < 55:
+        if analiz.get("olasilik", 0) < 50:
             continue
 
         oran = oran_tahmin(analiz["olasilik"])
@@ -716,7 +716,7 @@ def handle_callback(cq):
 def main():
     threading.Thread(target=run_health_server, daemon=True).start()
     init_db()
-    print("=== MAC KUPON BOTU v3 BASLADI ===", flush=True)
+    print("=== MAC KUPON BOTU v3.1 BASLADI ===", flush=True)
     print(f"API-Football: {'VAR' if API_FOOTBALL_KEY else 'YOK'}", flush=True)
     print(f"Gemini: {'VAR' if GEMINI_API_KEY else 'YOK'}", flush=True)
     print(f"Telegram: {'VAR' if TELEGRAM_TOKEN else 'YOK'}", flush=True)
