@@ -25,10 +25,12 @@ MIN_ISTEK_ARASI = 3.0
 USER_COOLDOWN = {}
 RATE_LIMIT_SECONDS = 300
 
-# V4.2 AYARLAR
-MAX_TARANAN = 30
+# V5 AYARLAR - SADECE CANLI
+MAX_TARANAN = 15
 MIN_OLASILIK = 55
 MIN_SART = 4
+MIN_DAKIKA = 25
+MAX_DAKIKA = 80
 HAFTALIK_UCRET = "100$"
 
 # ==========================================
@@ -138,29 +140,14 @@ def api_football(endpoint, params=None):
         return None
 
 def canli_maclari_al():
+    """SADECE 25-80. dakika arasi canli maclar."""
     r = api_football("fixtures", {"live": "all"})
     if not r: return []
     maclar = []
     for f in r.get("response", []):
         try:
             dakika = f["fixture"]["status"]["elapsed"] or 0
-            if 1 <= dakika <= 70:
-                maclar.append(f)
-        except: continue
-    return maclar
-
-def yaklasan_maclari_al(dakika_araligi=120):
-    """X dakika icinde baslayacak maclar. UTC hesabi."""
-    bugun = datetime.now().strftime("%Y-%m-%d")
-    r = api_football("fixtures", {"date": bugun})
-    if not r: return []
-    simdi_utc = datetime.utcnow()
-    maclar = []
-    for f in r.get("response", []):
-        try:
-            mac_saati_utc = datetime.fromisoformat(f["fixture"]["date"].replace("Z", ""))
-            fark = (mac_saati_utc - simdi_utc).total_seconds() / 60
-            if 0 < fark <= dakika_araligi:
+            if MIN_DAKIKA <= dakika <= MAX_DAKIKA:
                 maclar.append(f)
         except: continue
     return maclar
@@ -472,25 +459,20 @@ def check_rate_limit(cid):
     return True
 
 # ==========================================
-# KUPON OLUSTURMA - SADECE ALT
+# KUPON OLUSTURMA - SADECE CANLI ALT
 # ==========================================
 def oran_tahmin(olasilik):
     if olasilik <= 0: return 1.0
     return round(1 / (olasilik / 100.0), 2)
 
 def kupon_olustur(cid):
-    send_msg(cid, f"🔍 ALT için {MAX_TARANAN} maç taranıyor... (3-5 dk)")
+    send_msg(cid, f"🔍 Canlı maçlar taranıyor... ({MIN_DAKIKA}-{MAX_DAKIKA}. dk arası)")
 
     maclar = canli_maclari_al()
-    print(f"Canli mac: {len(maclar)}", flush=True)
+    print(f"Canli mac ({MIN_DAKIKA}-{MAX_DAKIKA}. dk): {len(maclar)}", flush=True)
 
-    if len(maclar) < 5:
-        yaklasan = yaklasan_maclari_al(120)
-        print(f"Yaklasan: {len(yaklasan)}", flush=True)
-        maclar += yaklasan
-
-    if len(maclar) < 5:
-        send_msg(cid, "❌ Yeterli maç yok. Biraz sonra tekrar dene.")
+    if len(maclar) < 3:
+        send_msg(cid, f"❌ Şu an {MIN_DAKIKA}-{MAX_DAKIKA}. dakikada yeterli canlı maç yok. Biraz sonra tekrar dene.")
         return
 
     def oncelik(m):
@@ -509,7 +491,7 @@ def kupon_olustur(cid):
         lig_id = mac["league"]["id"]
         sezon = mac["league"]["season"]
 
-        print(f"[{idx}/{len(secilenler)}] {teams['home']['name']} vs {teams['away']['name']}", flush=True)
+        print(f"[{idx}/{len(secilenler)}] {teams['home']['name']} vs {teams['away']['name']} ({(f['status']['elapsed'] or 0)}')", flush=True)
 
         ist = mac_istatistik_al(fid)
         sak = mac_sakatlik_al(fid)
@@ -629,8 +611,9 @@ def _menu_keyboard():
     ]}
 
 def _menu_text():
-    return (f"🤖 *GOL ALT KUPON BOTU v4.2*\n\n"
+    return (f"🤖 *GOL ALT KUPON BOTU v5*\n\n"
             f"🎯 Sadece *GOL ALT* bahisleri\n"
+            f"⚽ Canlı maçlar ({MIN_DAKIKA}-{MAX_DAKIKA}. dk)\n"
             f"🔍 {MAX_TARANAN} maç taranır\n"
             f"✅ En iyi 2 ALT maçı seçilir\n"
             f"🧠 Gemini 3.1 Pro analizi\n\n"
@@ -671,15 +654,16 @@ def show_istatistik(cid, mid=None):
     else: send_msg(cid, text, "Markdown", _ana_menu_buton())
 
 def show_yardim(cid, mid=None):
-    text = (f"❓ *YARDIM - v4.2*\n\n"
+    text = (f"❓ *YARDIM - v5*\n\n"
             f"🎯 /start — Menü\n"
             f"⚽ /kupon — ALT kuponu al\n"
             f"📜 /gecmis — Son kuponlar\n"
             f"📊 /istatistik — Başarı oranı\n\n"
             f"📌 *Bu bot ne yapar?*\n"
+            f"• Sadece canlı maçları tarar\n"
+            f"• Dakika: {MIN_DAKIKA}-{MAX_DAKIKA}\n"
             f"• {MAX_TARANAN} maçı analiz eder\n"
             f"• Sadece GOL ALT bahisleri\n"
-            f"• 1.5 ALT / 2.5 ALT / 3.5 ALT\n"
             f"• En iyi 2 maçı seçer\n"
             f"• Olasılık eşiği: %{MIN_OLASILIK}\n"
             f"• Min şart: {MIN_SART}/7\n\n"
@@ -750,7 +734,9 @@ def handle_callback(cq):
 def main():
     threading.Thread(target=run_health_server, daemon=True).start()
     init_db()
-    print("=== ALT KUPON BOTU v4.2 BASLADI ===", flush=True)
+    print("=== ALT KUPON BOTU v5 (SADECE CANLI) BASLADI ===", flush=True)
+    print(f"Dakika aralığı: {MIN_DAKIKA}-{MAX_DAKIKA}", flush=True)
+    print(f"Max taranan: {MAX_TARANAN}", flush=True)
     print(f"API-Football: {'VAR' if API_FOOTBALL_KEY else 'YOK'}", flush=True)
     print(f"Gemini: {'VAR' if GEMINI_API_KEY else 'YOK'}", flush=True)
     print(f"Telegram: {'VAR' if TELEGRAM_TOKEN else 'YOK'}", flush=True)
