@@ -25,6 +25,11 @@ MIN_ISTEK_ARASI = 3.0
 USER_COOLDOWN = {}
 RATE_LIMIT_SECONDS = 300
 
+# V4.1 AYARLAR
+MAX_TARANAN = 30
+MIN_OLASILIK = 55
+MIN_SART = 4
+
 # ==========================================
 # HEALTH SERVER
 # ==========================================
@@ -132,7 +137,6 @@ def api_football(endpoint, params=None):
         return None
 
 def canli_maclari_al():
-    """1-70. dakika arasi canli maclar."""
     r = api_football("fixtures", {"live": "all"})
     if not r: return []
     maclar = []
@@ -145,7 +149,6 @@ def canli_maclari_al():
     return maclar
 
 def yaklasan_maclari_al(dakika_araligi=120):
-    """X dakika icinde baslayacak maclar."""
     bugun = datetime.now().strftime("%Y-%m-%d")
     r = api_football("fixtures", {"date": bugun})
     if not r: return []
@@ -204,7 +207,6 @@ def sezon_ozetle(sezon, takim_adi):
         g_for_avg = sezon.get("goals", {}).get("for", {}).get("average", {}).get("total", "?")
         g_ag_avg = sezon.get("goals", {}).get("against", {}).get("average", {}).get("total", "?")
 
-        # Toplam gol ortalamasi (attigi + yedigi)
         try:
             toplam_gol_ort = float(g_for_avg) + float(g_ag_avg)
         except:
@@ -341,7 +343,7 @@ KARAR:
 ONEMLI:
 - Sadece ALT tercihi ver, UST asla verme
 - KG, korner, kart verme - sadece gol ALT
-- Olasilik %60'in altindaysa "BEKLE" ver
+- Olasilik %55'in altindaysa "BEKLE" ver
 - Gerekce 2-3 cumle, EN ONEMLI sebepleri belirt
 
 === CIKTI (SADECE JSON) ===
@@ -476,7 +478,7 @@ def oran_tahmin(olasilik):
     return round(1 / (olasilik / 100.0), 2)
 
 def kupon_olustur(cid):
-    send_msg(cid, "🔍 ALT için maçlar taranıyor... (2-3 dk)")
+    send_msg(cid, f"🔍 ALT için {MAX_TARANAN} maç taranıyor... (3-5 dk)")
 
     maclar = canli_maclari_al()
     print(f"Canli mac: {len(maclar)}", flush=True)
@@ -494,11 +496,10 @@ def kupon_olustur(cid):
         return m["fixture"]["status"]["elapsed"] or 0
 
     maclar.sort(key=oncelik, reverse=True)
-    secilenler = maclar[:20]
+    secilenler = maclar[:MAX_TARANAN]
 
-    print(f"Toplam taranacak: {len(secilenler)}", flush=True)
+    print(f"Taranacak: {len(secilenler)}", flush=True)
 
-    # Tum adayları puanla
     adaylar = []
     for idx, mac in enumerate(secilenler, 1):
         f = mac["fixture"]
@@ -521,13 +522,16 @@ def kupon_olustur(cid):
             continue
 
         tercih = analiz.get("tercih", "")
-        # Sadece ALT tercihleri kabul et
         if "ALT" not in tercih.upper():
-            print(f"   ⏭️ BEKLE veya ALT değil: {tercih}", flush=True)
+            print(f"   ⏭️ BEKLE/ALT değil: {tercih}", flush=True)
             continue
 
-        if analiz.get("olasilik", 0) < 60:
+        if analiz.get("olasilik", 0) < MIN_OLASILIK:
             print(f"   ⏭️ Olasılık düşük: %{analiz.get('olasilik')}", flush=True)
+            continue
+
+        if analiz.get("uyan_sart", 0) < MIN_SART:
+            print(f"   ⏭️ Şart düşük: {analiz.get('uyan_sart')}/7", flush=True)
             continue
 
         oran = oran_tahmin(analiz["olasilik"])
@@ -541,10 +545,9 @@ def kupon_olustur(cid):
         print(f"   ✅ ADAY: {tercih} | %{analiz['olasilik']} | {oran}", flush=True)
 
     if len(adaylar) < 2:
-        send_msg(cid, f"❌ Yeterli ALT maçı bulunamadı ({len(adaylar)}/2).")
+        send_msg(cid, f"❌ Yeterli ALT maçı yok ({len(adaylar)}/2).")
         return
 
-    # En iyi 2 tanesini seç (uyan_sart + olasilik bazli)
     adaylar.sort(key=lambda x: (x["uyan_sart"], x["olasilik"]), reverse=True)
     kupon_maclar = adaylar[:2]
 
@@ -559,7 +562,6 @@ def kupon_olustur(cid):
 
     ort_guven = round(sum(km["analiz"]["guven"] for km in kupon_maclar) / len(kupon_maclar))
 
-    # Kupon mesaji
     t = []
     t.append("🎯 GOL ALT KUPONU")
     t.append(f"⏰ {datetime.now().strftime('%d.%m.%Y - %H:%M')}")
@@ -626,9 +628,9 @@ def _menu_keyboard():
     ]}
 
 def _menu_text():
-    return ("🤖 *GOL ALT KUPON BOTU*\n\n"
+    return ("🤖 *GOL ALT KUPON BOTU v4.1*\n\n"
             "🎯 Sadece *GOL ALT* bahisleri\n"
-            "🔍 20 maç taranır\n"
+            "🔍 30 maç taranır\n"
             "✅ En iyi 2 ALT maçı seçilir\n"
             "🧠 Gemini 3.1 Pro analizi\n\n"
             "⬇️ Menüden seç:")
@@ -667,23 +669,18 @@ def show_istatistik(cid, mid=None):
     else: send_msg(cid, text, "Markdown", _ana_menu_buton())
 
 def show_yardim(cid, mid=None):
-    text = ("❓ *YARDIM*\n\n"
+    text = ("❓ *YARDIM - v4.1*\n\n"
             "🎯 /start — Menü\n"
             "⚽ /kupon — ALT kuponu al\n"
             "📜 /gecmis — Son kuponlar\n"
             "📊 /istatistik — Başarı oranı\n\n"
             "📌 *Bu bot ne yapar?*\n"
-            "• 20 maçı analiz eder\n"
+            "• 30 maçı analiz eder\n"
             "• Sadece GOL ALT bahisleri\n"
             "• 1.5 ALT / 2.5 ALT / 3.5 ALT\n"
             "• En iyi 2 maçı seçer\n"
-            "• Gemini 3.1 Pro ile analiz\n\n"
-            "✅ *ALT için aranan şartlar:*\n"
-            "• Düşük gol ortalaması\n"
-            "• H2H'de ALT oranı yüksek\n"
-            "• Skor 0-0 veya 1-0\n"
-            "• Dakika 25+\n"
-            "• Düşük şut sayısı\n\n"
+            "• Olasılık eşiği: %55\n"
+            "• Min şart: 4/7\n\n"
             "⚠️ Yatırım tavsiyesi değildir.")
     if mid: edit_message_text(cid, mid, text, "Markdown", _ana_menu_buton())
     else: send_msg(cid, text, "Markdown", _ana_menu_buton())
@@ -750,7 +747,7 @@ def handle_callback(cq):
 def main():
     threading.Thread(target=run_health_server, daemon=True).start()
     init_db()
-    print("=== ALT KUPON BOTU v4 BASLADI ===", flush=True)
+    print("=== ALT KUPON BOTU v4.1 BASLADI ===", flush=True)
     print(f"API-Football: {'VAR' if API_FOOTBALL_KEY else 'YOK'}", flush=True)
     print(f"Gemini: {'VAR' if GEMINI_API_KEY else 'YOK'}", flush=True)
     print(f"Telegram: {'VAR' if TELEGRAM_TOKEN else 'YOK'}", flush=True)
