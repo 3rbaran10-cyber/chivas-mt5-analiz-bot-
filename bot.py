@@ -23,7 +23,7 @@ SON_ISTEK_ZAMANI = [0.0]
 MIN_ISTEK_ARASI = 3.0
 
 USER_COOLDOWN = {}
-RATE_LIMIT_SECONDS = 300  # 5 dk
+RATE_LIMIT_SECONDS = 300
 
 # ==========================================
 # HEALTH SERVER
@@ -128,7 +128,7 @@ def api_football(endpoint, params=None):
             return None
         return r.json()
     except Exception as e:
-        print(f"API-Football istek hatasi: {str(e)[:150]}", flush=True)
+        print(f"API-Football istek: {str(e)[:150]}", flush=True)
         return None
 
 def canli_maclari_al():
@@ -154,7 +154,7 @@ def yaklasan_maclari_al(dakika_araligi=60):
     for f in r.get("response", []):
         try:
             mac_saati = datetime.fromisoformat(f["fixture"]["date"].replace("Z", "+00:00"))
-            mac_saati_local = mac_saati.replace(tzinfo=None) + timedelta(hours=3)  # TR saati
+            mac_saati_local = mac_saati.replace(tzinfo=None) + timedelta(hours=3)
             fark = (mac_saati_local - simdi).total_seconds() / 60
             if 0 < fark <= dakika_araligi:
                 maclar.append(f)
@@ -184,11 +184,59 @@ def puan_durumu_al(league_id, season):
         return resp[0]["league"]["standings"][0]
     return None
 
+def takim_sezon_istatistik_al(team_id, league_id, season):
+    """Takimin sezon istatistikleri: gol, kart, form."""
+    r = api_football("teams/statistics", {
+        "team": team_id, "league": league_id, "season": season
+    })
+    if not r: return None
+    return r.get("response", {})
+
+def sezon_ozetle(sezon, takim_adi):
+    """Sezon istatistiklerini ozetle."""
+    if not sezon:
+        return f"{takim_adi}: sezon verisi yok"
+
+    try:
+        form = sezon.get("form", "?")
+        played = sezon.get("fixtures", {}).get("played", {}).get("total", 0)
+        wins = sezon.get("fixtures", {}).get("wins", {}).get("total", 0)
+        draws = sezon.get("fixtures", {}).get("draws", {}).get("total", 0)
+        loses = sezon.get("fixtures", {}).get("loses", {}).get("total", 0)
+
+        g_for_avg = sezon.get("goals", {}).get("for", {}).get("average", {}).get("total", "?")
+        g_ag_avg = sezon.get("goals", {}).get("against", {}).get("average", {}).get("total", "?")
+
+        # Kart: dakika araliklarina gore topla
+        cards = sezon.get("cards", {})
+        yellow_total = 0
+        red_total = 0
+        for period, val in (cards.get("yellow") or {}).items():
+            if period != "total" and isinstance(val, dict):
+                yellow_total += val.get("total") or 0
+            elif period == "total":
+                yellow_total = val.get("total") or yellow_total
+        for period, val in (cards.get("red") or {}).items():
+            if period != "total" and isinstance(val, dict):
+                red_total += val.get("total") or 0
+            elif period == "total":
+                red_total = val.get("total") or red_total
+
+        y_per_match = round(yellow_total / played, 2) if played else 0
+        r_per_match = round(red_total / played, 2) if played else 0
+
+        return (f"{takim_adi}:\n"
+                f"  • Form: {form} ({wins}G-{draws}B-{loses}M)\n"
+                f"  • Gol ort: {g_for_avg} / Yedig: {g_ag_avg}\n"
+                f"  • Sari kart ort: {y_per_match}/maç | Kirmizi: {r_per_match}/maç")
+    except Exception as e:
+        print(f"sezon_ozetle: {e}", flush=True)
+        return f"{takim_adi}: ozet hatasi"
+
 # ==========================================
 # ISTATISTIK OZETLEME
 # ==========================================
 def istatistik_ozetle(stats):
-    """API'den gelen istatistik dizisini ozetle."""
     if not stats: return {}
     sonuc = {}
     for takim in stats:
@@ -226,6 +274,16 @@ def sakatlik_ozetle(inj_list, team_id):
         except: continue
     return ", ".join(satirlar) if satirlar else "Sakat oyuncu yok"
 
+def puan_durumu_ozetle(standings, ev_id, dep_id):
+    if not standings: return "Puan durumu yok"
+    satirlar = []
+    for s in standings:
+        try:
+            if s["team"]["id"] in (ev_id, dep_id):
+                satirlar.append(f"{s['team']['name']}: {s['rank']}. sira, {s['points']} puan")
+        except: continue
+    return "\n".join(satirlar) if satirlar else "Puan durumu yok"
+
 # ==========================================
 # GEMINI
 # ==========================================
@@ -252,6 +310,11 @@ Dakika: {dakika}
 === CANLI ISTATISTIKLER ===
 {istatistikler}
 
+=== TAKIM SEZON ISTATISTIKLERI ===
+{ev_sezon}
+
+{dep_sezon}
+
 === SAKATLIKLAR ===
 {ev_sakat}
 {dep_sakat}
@@ -265,15 +328,16 @@ Dakika: {dakika}
 === GOREV ===
 Bu mac icin EN IYI bahis tercihini sec. Su bahis turlerinden birini sec:
 
-1. Alt/Üst (ornek: 2.5 UST, 1.5 ALT)
+1. Alt/Üst (2.5 UST, 1.5 ALT, 3.5 UST)
 2. KG VAR / KG YOK
-3. Korner Alt/Üst (ornek: 8.5 UST)
-4. Sari Kart Alt/Üst (ornek: 3.5 UST)
+3. Korner Alt/Üst (8.5 UST, 9.5 ALT)
+4. Sari Kart Alt/Üst (3.5 UST, 4.5 ALT)
 
-KURALLAR:
-- Skor ve dakikaya gore MANTIKLI tercih yap
+ONEMLI KURALLAR:
+- Sezon istatistiklerini kullan: takimlarin gol/kart/korner ortalamasini dikkate al
+- Canli istatistikleri kullan: skor, dakika, sut, korner sayisina bak
 - Olasilik %55'in altindaysa bu mac icin "BEKLE" ver
-- Gerekceyi 2-3 cumle yaz
+- Gerekceyi 2-3 cumle yaz, sadece EN ONEMLI sebebi belirt
 - Olasilik ver (%55-95 arasi)
 
 === CIKTI (SADECE JSON) ===
@@ -285,8 +349,7 @@ KURALLAR:
   "guven": 75
 }}"""
 
-def maci_analiz_et(mac, stats, sakatliklar, h2h, puan_durumu):
-    """Tek mac icin Gemini'den tercih al."""
+def maci_analiz_et(mac, stats, sakatliklar, h2h, puan_durumu, ev_sezon, dep_sezon):
     f = mac["fixture"]
     teams = mac["teams"]
     goals = mac["goals"]
@@ -315,10 +378,15 @@ def maci_analiz_et(mac, stats, sakatliklar, h2h, puan_durumu):
     h2h_str = h2h_ozetle(h2h)
     pd_str = puan_durumu_ozetle(puan_durumu, ev_id, dep_id)
 
+    ev_sezon_str = sezon_ozetle(ev_sezon, ev_sahibi)
+    dep_sezon_str = sezon_ozetle(dep_sezon, deplasman)
+
     prompt = MAC_ANALIZ_PROMPT.format(
         lig=lig, ev_sahibi=ev_sahibi, deplasman=deplasman,
         durum=durum, skor=skor, dakika=dakika,
-        istatistikler=ist_str, ev_sakat=ev_sakat, dep_sakat=dep_sakat,
+        istatistikler=ist_str,
+        ev_sezon=ev_sezon_str, dep_sezon=dep_sezon_str,
+        ev_sakat=ev_sakat, dep_sakat=dep_sakat,
         h2h=h2h_str, puan_durumu=pd_str
     )
 
@@ -353,18 +421,8 @@ def maci_analiz_et(mac, stats, sakatliklar, h2h, puan_durumu):
         a = json.loads(text)
         return a
     except Exception as e:
-        print(f"Gemini parse hatasi: {e}", flush=True)
+        print(f"Gemini parse: {e}", flush=True)
         return None
-
-def puan_durumu_ozetle(standings, ev_id, dep_id):
-    if not standings: return "Puan durumu yok"
-    satirlar = []
-    for s in standings:
-        try:
-            if s["team"]["id"] in (ev_id, dep_id):
-                satirlar.append(f"{s['team']['name']}: {s['rank']}. sira, {s['points']} puan")
-        except: continue
-    return "\n".join(satirlar) if satirlar else "Puan durumu yok"
 
 # ==========================================
 # TELEGRAM
@@ -410,31 +468,29 @@ def check_rate_limit(cid):
 # KUPON OLUSTURMA
 # ==========================================
 def oran_tahmin(olasilik):
-    """Olasiliktan yaklasik oran."""
     if olasilik <= 0: return 1.0
     return round(1 / (olasilik / 100.0), 2)
 
 def kupon_olustur(cid):
-    send_msg(cid, "🔍 Maçlar taranıyor... (Bu 1-2 dakika sürebilir)")
+    send_msg(cid, "🔍 Maçlar taranıyor... (1-2 dk)")
 
     maclar = canli_maclari_al()
-    print(f"Canli mac sayisi: {len(maclar)}", flush=True)
+    print(f"Canli mac: {len(maclar)}", flush=True)
 
     if len(maclar) < 3:
         yaklasan = yaklasan_maclari_al(60)
-        print(f"Yaklasan mac sayisi: {len(yaklasan)}", flush=True)
+        print(f"Yaklasan: {len(yaklasan)}", flush=True)
         maclar += yaklasan
 
     if len(maclar) < 3:
-        send_msg(cid, "❌ Şu an uygun maç bulunamadı. Biraz sonra tekrar deneyin.")
+        send_msg(cid, "❌ Uygun maç yok. Biraz sonra tekrar dene.")
         return
 
-    # Oncelik: canli + 70. dk yakini
     def oncelik(m):
         return m["fixture"]["status"]["elapsed"] or 0
 
     maclar.sort(key=oncelik, reverse=True)
-    secilenler = maclar[:8]  # 8 mac dene, 3 tanesi tutsun
+    secilenler = maclar[:8]
 
     kupon_maclar = []
     for mac in secilenler:
@@ -451,8 +507,10 @@ def kupon_olustur(cid):
         sak = mac_sakatlik_al(fid)
         h2h = h2h_al(teams["home"]["id"], teams["away"]["id"])
         pd = puan_durumu_al(lig_id, sezon)
+        ev_sezon = takim_sezon_istatistik_al(teams["home"]["id"], lig_id, sezon)
+        dep_sezon = takim_sezon_istatistik_al(teams["away"]["id"], lig_id, sezon)
 
-        analiz = maci_analiz_et(mac, ist, sak, h2h, pd)
+        analiz = maci_analiz_et(mac, ist, sak, h2h, pd, ev_sezon, dep_sezon)
         if not analiz:
             continue
 
@@ -468,29 +526,21 @@ def kupon_olustur(cid):
         print(f"✅ {teams['home']['name']} vs {teams['away']['name']} - {analiz['tercih']}", flush=True)
 
     if len(kupon_maclar) < 3:
-        send_msg(cid, f"❌ Yeterli uygun maç bulunamadı ({len(kupon_maclar)}/3).")
+        send_msg(cid, f"❌ Yeterli maç yok ({len(kupon_maclar)}/3).")
         return
 
-    # Toplam oran
     toplam_oran = 1.0
     for km in kupon_maclar:
         toplam_oran *= km["oran"]
     toplam_oran = round(toplam_oran, 2)
 
-    # 3.0 altindaysa biraz riskli olanlari ekleyip oran artirmayi dene
-    if toplam_oran < 3.0:
-        # En dusuk olasiligi olan maci alternatifle degistirmek yerine
-        # kullanicinin bildirimine ek olarak "daha yuksek oran icin /riskli" mesaji
-        pass
-
     ort_guven = round(sum(km["analiz"]["guven"] for km in kupon_maclar) / len(kupon_maclar))
 
-    # Kupon mesaji
+    # KISA FORMAT
     t = []
-    t.append("🎯 *CANLI MAÇ KUPONU*")
+    t.append("🎯 CANLI KUPON")
     t.append(f"⏰ {datetime.now().strftime('%d.%m.%Y - %H:%M')}")
-    t.append("━━━━━━━━━━━━━━━━━━━━━━")
-    t.append("")
+    t.append("━━━━━━━━━━━━━━━━━━")
 
     for i, km in enumerate(kupon_maclar, 1):
         m = km["mac"]
@@ -500,30 +550,25 @@ def kupon_olustur(cid):
         dakika = m["fixture"]["status"]["elapsed"] or 0
         skor = f"{goals['home'] or 0}-{goals['away'] or 0}"
 
-        t.append(f"*{i}️⃣ {teams['home']['name']} - {teams['away']['name']}*")
-        t.append(f"⏱️ {dakika}' | Skor: {skor}")
-        t.append(f"⚽ Tercih: *{a['tercih']}*")
-        t.append(f"📊 Olasılık: %{a['olasilik']}")
-        t.append(f"💰 Oran: {km['oran']}")
-        t.append(f"📝 {a['gerekce']}")
-        t.append("")
-        t.append("━━━━━━━━━━━━━━━━━━━━━━")
-        t.append("")
+        t.append(f"{i}. {teams['home']['name']} - {teams['away']['name']}")
+        t.append(f"⏱️ {dakika}' | {skor}")
+        t.append(f"⚽ {a['tercih']} | 📊 %{a['olasilik']} | 💰 {km['oran']}")
 
-    t.append(f"📈 *TOPLAM ORAN: {toplam_oran}*")
-    t.append(f"⭐ *GENEL GÜVEN: %{ort_guven}*")
+        gerekce = a.get('gerekce', '')
+        if len(gerekce) > 80:
+            gerekce = gerekce[:77] + "..."
+        t.append(f"📝 {gerekce}")
+        t.append("━━━━━━━━━━━━━━━━━━")
 
-    # Oneri miktar
+    t.append(f"📈 TOPLAM: {toplam_oran} | ⭐ %{ort_guven}")
     miktar = 100
     kazanc = round(miktar * toplam_oran)
-    t.append(f"🎲 ÖNERİLEN: {miktar} TL")
-    t.append(f"💵 OLASI KAZANÇ: {kazanc} TL")
+    t.append(f"🎲 {miktar} TL → 💵 {kazanc} TL")
     t.append("")
     t.append("⚠️ Yatırım tavsiyesi değildir.")
 
     metin = "\n".join(t)
 
-    # Kaydet
     maclar_json = json.dumps([{
         "mac": f"{km['mac']['teams']['home']['name']} - {km['mac']['teams']['away']['name']}",
         "tercih": km["analiz"]["tercih"],
@@ -540,7 +585,7 @@ def kupon_olustur(cid):
             {"text": "❌ Tutmadı", "callback_data": f"sonuc:tutmadi:{kid}"}
         ]]}
 
-    send_msg(cid, metin, "Markdown", rm)
+    send_msg(cid, metin, None, rm)
 
 # ==========================================
 # MENU
@@ -599,13 +644,15 @@ def show_istatistik(cid, mid=None):
 
 def show_yardim(cid, mid=None):
     text = ("❓ *YARDIM*\n\n"
-            "🎯 /start — Kupon al\n"
+            "🎯 /start — Menü\n"
+            "⚽ /kupon — Kupon al\n"
             "📜 /gecmis — Son kuponlar\n"
             "📊 /istatistik — Başarı oranı\n\n"
             "📌 *Bot ne yapar?*\n"
             "• Canlı maçları tarar (1-70. dk)\n"
             "• Yaklaşan maçları tarar (sonraki 60 dk)\n"
-            "• Her maç için istatistik/sakatlık/H2H/puan analizi\n"
+            "• Canlı istatistik + sezon istatistiği\n"
+            "• Sakatlık + H2H + puan durumu\n"
             "• Gemini 3.1 Pro ile tercih üretir\n"
             "• 3 maçlık kupon oluşturur\n\n"
             "⚠️ Yatırım tavsiyesi değildir.")
@@ -620,8 +667,7 @@ def handle_command(cid, text):
     cmd = text.split()[0].lower() if text else ""
 
     if cmd == "/start":
-        show_menu(cid)
-        return
+        show_menu(cid); return
     if cmd == "/kupon":
         if not check_rate_limit(cid): return
         threading.Thread(target=kupon_olustur, args=(cid,), daemon=True).start()
@@ -675,10 +721,10 @@ def handle_callback(cq):
 def main():
     threading.Thread(target=run_health_server, daemon=True).start()
     init_db()
-    print("=== MAC KUPON BOTU v1 BASLADI ===", flush=True)
-    print(f"API-Football key: {'VAR' if API_FOOTBALL_KEY else 'YOK'}", flush=True)
-    print(f"Gemini key: {'VAR' if GEMINI_API_KEY else 'YOK'}", flush=True)
-    print(f"Telegram token: {'VAR' if TELEGRAM_TOKEN else 'YOK'}", flush=True)
+    print("=== MAC KUPON BOTU v2 BASLADI ===", flush=True)
+    print(f"API-Football: {'VAR' if API_FOOTBALL_KEY else 'YOK'}", flush=True)
+    print(f"Gemini: {'VAR' if GEMINI_API_KEY else 'YOK'}", flush=True)
+    print(f"Telegram: {'VAR' if TELEGRAM_TOKEN else 'YOK'}", flush=True)
 
     offset = get_offset()
 
