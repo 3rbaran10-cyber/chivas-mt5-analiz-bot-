@@ -23,15 +23,140 @@ SON_ISTEK_ZAMANI = [0.0]
 MIN_ISTEK_ARASI = 3.0
 
 USER_COOLDOWN = {}
-RATE_LIMIT_SECONDS = 300
+RATE_LIMIT_SECONDS = 180
 
-# V5 AYARLAR - SADECE CANLI
-MAX_TARANAN = 15
-MIN_OLASILIK = 55
-MIN_SART = 4
+# V8 AYARLAR
+MAX_TARANAN = 6
+MIN_OLASILIK = 45
+MIN_SART = 2
 MIN_DAKIKA = 25
 MAX_DAKIKA = 80
 HAFTALIK_UCRET = "100$"
+
+SONUC_KONTROL_ARASI = 300   # 5 dakikada bir kontrol
+AYNI_MAC_ENGELLE_DK = 30    # son 30 dk ayni maci tekrar onerme
+
+# ==========================================
+# SQLITE - THREAD SAFE
+# ==========================================
+DB_PATH = "/tmp/bot.db"
+_DB_LOCK = threading.Lock()
+
+def db_conn():
+    """Her cagride yeni baglanti, thread-safe."""
+    conn = sqlite3.connect(DB_PATH, timeout=20, check_same_thread=False)
+    return conn
+
+def init_db():
+    try:
+        with _DB_LOCK:
+            conn = db_conn()
+            conn.execute("CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value INTEGER)")
+            conn.execute("""CREATE TABLE IF NOT EXISTS kuponlar (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                cid INTEGER, tarih TEXT, maclar TEXT,
+                toplam_oran REAL, guven INTEGER,
+                sonuc TEXT DEFAULT NULL, ts INTEGER)""")
+
+            # Yeni sutunlari ekle (yoksa)
+            mevcut = [row[1] for row in conn.execute("PRAGMA table_info(kuponlar)").fetchall()]
+            if "fixture_id" not in mevcut:
+                conn.execute("ALTER TABLE kuponlar ADD COLUMN fixture_id INTEGER")
+            if "tercih" not in mevcut:
+                conn.execute("ALTER TABLE kuponlar ADD COLUMN tercih TEXT")
+            if "kontrol_edildi" not in mevcut:
+                conn.execute("ALTER TABLE kuponlar ADD COLUMN kontrol_edildi INTEGER DEFAULT 0")
+            conn.commit()
+            conn.close()
+        print("DB hazir", flush=True)
+    except Exception as e:
+        print(f"DB hatasi: {e}", flush=True)
+
+def get_offset():
+    try:
+        with _DB_LOCK:
+            conn = db_conn()
+            cur = conn.execute("SELECT value FROM state WHERE key='offset'")
+            row = cur.fetchone(); conn.close()
+            return row[0] if row else 0
+    except: return 0
+
+def save_offset(o):
+    try:
+        with _DB_LOCK:
+            conn = db_conn()
+            conn.execute("INSERT OR REPLACE INTO state (key, value) VALUES ('offset', ?)", (o,))
+            conn.commit(); conn.close()
+    except: pass
+
+def save_kupon(cid, maclar_json, toplam_oran, guven, fixture_id, tercih):
+    try:
+        with _DB_LOCK:
+            conn = db_conn()
+            cur = conn.execute("""INSERT INTO kuponlar
+                (cid, tarih, maclar, toplam_oran, guven, fixture_id, tercih, kontrol_edildi, ts)
+                VALUES (?,?,?,?,?,?,?,0,?)""",
+                (cid, datetime.now().strftime("%d.%m.%Y %H:%M"),
+                 maclar_json, toplam_oran, guven, fixture_id, tercih, int(time.time())))
+            conn.commit()
+            rid = cur.lastrowid; conn.close()
+            return rid
+    except Exception as e:
+        print(f"save_kupon: {e}", flush=True); return None
+
+def update_sonuc(kid, sonuc):
+    try:
+        with _DB_LOCK:
+            conn = db_conn()
+            cur = conn.execute("UPDATE kuponlar SET sonuc=?, kontrol_edildi=1 WHERE id=? AND sonuc IS NULL", (sonuc, kid))
+            d = cur.rowcount; conn.commit(); conn.close()
+            return d > 0
+    except: return False
+
+def bekleyen_kuponlar():
+    try:
+        with _DB_LOCK:
+            conn = db_conn()
+            cur = conn.execute("""SELECT id, cid, fixture_id, tercih
+                FROM kuponlar WHERE kontrol_edildi=0 AND fixture_id IS NOT NULL AND sonuc IS NULL""")
+            rows = cur.fetchall(); conn.close()
+            return rows
+    except: return []
+
+def son_onekli_fixture_idleri():
+    """Son X dakikada onerilen fixture id'leri."""
+    try:
+        esik = int(time.time()) - (AYNI_MAC_ENGELLE_DK * 60)
+        with _DB_LOCK:
+            conn = db_conn()
+            cur = conn.execute("""SELECT fixture_id FROM kuponlar
+                WHERE ts >= ? AND fixture_id IS NOT NULL""", (esik,))
+            rows = cur.fetchall(); conn.close()
+            return set(r[0] for r in rows)
+    except: return set()
+
+def get_gecmis(cid, limit=10):
+    try:
+        with _DB_LOCK:
+            conn = db_conn()
+            cur = conn.execute("""SELECT id, tarih, toplam_oran, guven, sonuc
+                FROM kuponlar WHERE cid=? ORDER BY id DESC LIMIT ?""", (cid, limit))
+            rows = cur.fetchall(); conn.close()
+            return rows
+    except: return []
+
+def get_istatistik(cid):
+    try:
+        with _DB_LOCK:
+            conn = db_conn()
+            cur = conn.execute("""SELECT COUNT(*),
+                SUM(CASE WHEN sonuc='tuttu' THEN 1 ELSE 0 END),
+                SUM(CASE WHEN sonuc='tutmadi' THEN 1 ELSE 0 END)
+                FROM kuponlar WHERE cid=? AND sonuc IS NOT NULL""", (cid,))
+            total, tuttu, tutmadi = cur.fetchone()
+            conn.close()
+            return {"total": total or 0, "tuttu": tuttu or 0, "tutmadi": tutmadi or 0}
+    except: return {"total": 0, "tuttu": 0, "tutmadi": 0}
 
 # ==========================================
 # HEALTH SERVER
@@ -45,83 +170,6 @@ class Health(BaseHTTPRequestHandler):
 def run_health_server():
     port = int(os.environ.get("PORT", 10000))
     HTTPServer(("0.0.0.0", port), Health).serve_forever()
-
-# ==========================================
-# SQLITE
-# ==========================================
-DB_PATH = "/tmp/bot.db"
-
-def init_db():
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        conn.execute("CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value INTEGER)")
-        conn.execute("""CREATE TABLE IF NOT EXISTS kuponlar (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            cid INTEGER, tarih TEXT, maclar TEXT,
-            toplam_oran REAL, guven INTEGER,
-            sonuc TEXT DEFAULT NULL, ts INTEGER)""")
-        conn.commit(); conn.close()
-        print("DB hazir", flush=True)
-    except Exception as e:
-        print(f"DB hatasi: {e}", flush=True)
-
-def get_offset():
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        cur = conn.execute("SELECT value FROM state WHERE key='offset'")
-        row = cur.fetchone(); conn.close()
-        return row[0] if row else 0
-    except: return 0
-
-def save_offset(o):
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        conn.execute("INSERT OR REPLACE INTO state (key, value) VALUES ('offset', ?)", (o,))
-        conn.commit(); conn.close()
-    except: pass
-
-def save_kupon(cid, maclar_json, toplam_oran, guven):
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        cur = conn.execute("""INSERT INTO kuponlar
-            (cid, tarih, maclar, toplam_oran, guven, ts)
-            VALUES (?,?,?,?,?,?)""",
-            (cid, datetime.now().strftime("%d.%m.%Y %H:%M"),
-             maclar_json, toplam_oran, guven, int(time.time())))
-        conn.commit()
-        rid = cur.lastrowid; conn.close()
-        return rid
-    except Exception as e:
-        print(f"save_kupon: {e}", flush=True); return None
-
-def update_sonuc(kid, sonuc):
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        cur = conn.execute("UPDATE kuponlar SET sonuc=? WHERE id=? AND sonuc IS NULL", (sonuc, kid))
-        d = cur.rowcount; conn.commit(); conn.close()
-        return d > 0
-    except: return False
-
-def get_gecmis(cid, limit=10):
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        cur = conn.execute("""SELECT id, tarih, toplam_oran, guven, sonuc
-            FROM kuponlar WHERE cid=? ORDER BY id DESC LIMIT ?""", (cid, limit))
-        rows = cur.fetchall(); conn.close()
-        return rows
-    except: return []
-
-def get_istatistik(cid):
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        cur = conn.execute("""SELECT COUNT(*),
-            SUM(CASE WHEN sonuc='tuttu' THEN 1 ELSE 0 END),
-            SUM(CASE WHEN sonuc='tutmadi' THEN 1 ELSE 0 END)
-            FROM kuponlar WHERE cid=?""", (cid,))
-        total, tuttu, tutmadi = cur.fetchone()
-        conn.close()
-        return {"total": total or 0, "tuttu": tuttu or 0, "tutmadi": tutmadi or 0}
-    except: return {"total": 0, "tuttu": 0, "tutmadi": 0}
 
 # ==========================================
 # API-FOOTBALL
@@ -140,7 +188,6 @@ def api_football(endpoint, params=None):
         return None
 
 def canli_maclari_al():
-    """SADECE 25-80. dakika arasi canli maclar."""
     r = api_football("fixtures", {"live": "all"})
     if not r: return []
     maclar = []
@@ -151,6 +198,12 @@ def canli_maclari_al():
                 maclar.append(f)
         except: continue
     return maclar
+
+def mac_detay_al(fixture_id):
+    r = api_football("fixtures", {"id": fixture_id})
+    if not r: return None
+    resp = r.get("response", [])
+    return resp[0] if resp else None
 
 def mac_istatistik_al(fixture_id):
     r = api_football("fixtures/statistics", {"fixture": fixture_id})
@@ -191,15 +244,12 @@ def sezon_ozetle(sezon, takim_adi):
         wins = sezon.get("fixtures", {}).get("wins", {}).get("total", 0)
         draws = sezon.get("fixtures", {}).get("draws", {}).get("total", 0)
         loses = sezon.get("fixtures", {}).get("loses", {}).get("total", 0)
-
         g_for_avg = sezon.get("goals", {}).get("for", {}).get("average", {}).get("total", "?")
         g_ag_avg = sezon.get("goals", {}).get("against", {}).get("average", {}).get("total", "?")
-
         try:
             toplam_gol_ort = float(g_for_avg) + float(g_ag_avg)
         except:
             toplam_gol_ort = "?"
-
         return (f"{takim_adi}:\n"
                 f"  • Form: {form} ({wins}G-{draws}B-{loses}M)\n"
                 f"  • Gol ort: {g_for_avg} / Yedig: {g_ag_avg} / TOPLAM: {toplam_gol_ort}")
@@ -331,7 +381,7 @@ KARAR:
 ONEMLI:
 - Sadece ALT tercihi ver, UST asla verme
 - KG, korner, kart verme - sadece gol ALT
-- Olasilik %55'in altindaysa "BEKLE" ver
+- Olasilik %45'in altindaysa "BEKLE" ver
 - Gerekce 2-3 cumle
 
 === CIKTI (SADECE JSON) ===
@@ -459,7 +509,57 @@ def check_rate_limit(cid):
     return True
 
 # ==========================================
-# KUPON OLUSTURMA - SADECE CANLI ALT
+# OTOMATIK SONUC KONTROLU
+# ==========================================
+def tercih_tuttumu(tercih, ev_gol, dep_gol):
+    if not tercih:
+        return None
+    toplam = ev_gol + dep_gol
+    tercih_up = tercih.upper()
+    if "1.5 ALT" in tercih_up:
+        return toplam <= 1
+    if "2.5 ALT" in tercih_up:
+        return toplam <= 2
+    if "3.5 ALT" in tercih_up:
+        return toplam <= 3
+    return None
+
+def sonuc_kontrol_worker():
+    print("Sonuc kontrol worker basladi", flush=True)
+    while True:
+        try:
+            time.sleep(SONUC_KONTROL_ARASI)
+            bekleyenler = bekleyen_kuponlar()
+            if not bekleyenler:
+                continue
+            print(f"Bekleyen kupon: {len(bekleyenler)}", flush=True)
+            for (kid, cid, fixture_id, tercih) in bekleyenler:
+                try:
+                    detay = mac_detay_al(fixture_id)
+                    if not detay:
+                        continue
+                    durum = detay["fixture"]["status"]["short"]
+                    if durum not in ("FT", "AET", "PEN"):
+                        continue
+                    ev_gol = detay["goals"]["home"] or 0
+                    dep_gol = detay["goals"]["away"] or 0
+                    tuttu = tercih_tuttumu(tercih, ev_gol, dep_gol)
+                    if tuttu is None:
+                        continue
+                    sonuc = "tuttu" if tuttu else "tutmadi"
+                    if update_sonuc(kid, sonuc):
+                        e = "✅" if tuttu else "❌"
+                        send_msg(cid, f"{e} Kupon #{kid} OTOMATIK sonuclandi: {sonuc.upper()}\n"
+                                      f"⚽ Skor: {ev_gol}-{dep_gol} | Tercih: {tercih}")
+                        print(f"Kupon #{kid} sonuclandi: {sonuc}", flush=True)
+                except Exception as e:
+                    print(f"Kupon kontrol hatasi: {e}", flush=True)
+        except Exception as e:
+            print(f"Worker hatasi: {e}", flush=True)
+            time.sleep(60)
+
+# ==========================================
+# KUPON OLUSTURMA - TEK MAC
 # ==========================================
 def oran_tahmin(olasilik):
     if olasilik <= 0: return 1.0
@@ -472,8 +572,12 @@ def kupon_olustur(cid):
     print(f"Canli mac ({MIN_DAKIKA}-{MAX_DAKIKA}. dk): {len(maclar)}", flush=True)
 
     if len(maclar) < 3:
-        send_msg(cid, f"❌ Şu an {MIN_DAKIKA}-{MAX_DAKIKA}. dakikada yeterli canlı maç yok. Biraz sonra tekrar dene.")
+        send_msg(cid, f"❌ Şu an {MIN_DAKIKA}-{MAX_DAKIKA}. dakikada yeterli canlı maç yok.")
         return
+
+    # Ayni mac tekrarini engelle
+    onerilen_fixture_idler = son_onekli_fixture_idleri()
+    print(f"Son {AYNI_MAC_ENGELLE_DK} dk onerilen mac: {len(onerilen_fixture_idler)}", flush=True)
 
     def oncelik(m):
         return m["fixture"]["status"]["elapsed"] or 0
@@ -490,6 +594,11 @@ def kupon_olustur(cid):
         fid = f["id"]
         lig_id = mac["league"]["id"]
         sezon = mac["league"]["season"]
+
+        # Ayni mac tekrarini atla
+        if fid in onerilen_fixture_idler:
+            print(f"[{idx}/{len(secilenler)}] {teams['home']['name']} vs {teams['away']['name']} - ATLANDI (yakinda onerildi)", flush=True)
+            continue
 
         print(f"[{idx}/{len(secilenler)}] {teams['home']['name']} vs {teams['away']['name']} ({(f['status']['elapsed'] or 0)}')", flush=True)
 
@@ -527,74 +636,63 @@ def kupon_olustur(cid):
         })
         print(f"   ✅ ADAY: {tercih} | %{analiz['olasilik']} | {oran}", flush=True)
 
-    if len(adaylar) < 2:
-        send_msg(cid, f"❌ Yeterli ALT maçı yok ({len(adaylar)}/2).")
+    if len(adaylar) < 1:
+        send_msg(cid, f"❌ Uygun ALT maçı yok.")
         return
 
-    adaylar.sort(key=lambda x: (x["uyan_sart"], x["olasilik"]), reverse=True)
-    kupon_maclar = adaylar[:2]
+    # EN YUKSEK OLASILIKLI MACI SEC
+    adaylar.sort(key=lambda x: (x["olasilik"], x["uyan_sart"]), reverse=True)
+    km = adaylar[0]
 
-    print(f"=== SECILEN 2 MAC ===", flush=True)
-    for km in kupon_maclar:
-        print(f"  {km['mac']['teams']['home']['name']} vs {km['mac']['teams']['away']['name']} - {km['analiz']['tercih']}", flush=True)
+    print(f"=== SECILEN MAC ===", flush=True)
+    print(f"  {km['mac']['teams']['home']['name']} vs {km['mac']['teams']['away']['name']} - {km['analiz']['tercih']} (%{km['analiz']['olasilik']})", flush=True)
 
-    toplam_oran = 1.0
-    for km in kupon_maclar:
-        toplam_oran *= km["oran"]
-    toplam_oran = round(toplam_oran, 2)
-
-    ort_guven = round(sum(km["analiz"]["guven"] for km in kupon_maclar) / len(kupon_maclar))
+    a = km["analiz"]
+    m = km["mac"]
+    teams = m["teams"]
+    goals = m["goals"]
+    fixture_id = m["fixture"]["id"]
+    dakika = m["fixture"]["status"]["elapsed"] or 0
+    skor = f"{goals['home'] or 0}-{goals['away'] or 0}"
 
     t = []
     t.append("🎯 GOL ALT KUPONU")
     t.append(f"⏰ {datetime.now().strftime('%d.%m.%Y - %H:%M')}")
     t.append("━━━━━━━━━━━━━━━━━━")
-
-    for i, km in enumerate(kupon_maclar, 1):
-        m = km["mac"]
-        a = km["analiz"]
-        teams = m["teams"]
-        goals = m["goals"]
-        dakika = m["fixture"]["status"]["elapsed"] or 0
-        skor = f"{goals['home'] or 0}-{goals['away'] or 0}"
-
-        t.append(f"{i}. {teams['home']['name']} - {teams['away']['name']}")
-        t.append(f"⏱️ {dakika}' | {skor}")
-        t.append(f"⚽ {a['tercih']} | 📊 %{a['olasilik']} | 💰 {km['oran']}")
-        t.append(f"✅ Uyan şart: {a.get('uyan_sart', '?')}/7")
-
-        gerekce = a.get('gerekce', '')
-        if len(gerekce) > 80:
-            gerekce = gerekce[:77] + "..."
-        t.append(f"📝 {gerekce}")
-        t.append("━━━━━━━━━━━━━━━━━━")
-
-    t.append(f"📈 TOPLAM: {toplam_oran} | ⭐ %{ort_guven}")
+    t.append("")
+    t.append(f"⚽ {teams['home']['name']} - {teams['away']['name']}")
+    t.append(f"⏱️ {dakika}' | Skor: {skor}")
+    t.append("")
+    t.append(f"🎯 Tercih: {a['tercih']}")
+    t.append(f"📊 Olasılık: %{a['olasilik']}")
+    t.append(f"💰 Oran: {km['oran']}")
+    t.append(f"✅ Uyan şart: {a.get('uyan_sart', '?')}/7")
+    t.append("")
+    gerekce = a.get('gerekce', '')
+    if len(gerekce) > 150:
+        gerekce = gerekce[:147] + "..."
+    t.append(f"📝 {gerekce}")
+    t.append("")
+    t.append("━━━━━━━━━━━━━━━━━━")
     miktar = 100
-    kazanc = round(miktar * toplam_oran)
+    kazanc = round(miktar * km['oran'])
     t.append(f"🎲 {miktar} TL → 💵 {kazanc} TL")
     t.append("")
+    t.append("🤖 Sonuç otomatik kontrol edilecek")
     t.append("⚠️ Yatırım tavsiyesi değildir.")
 
     metin = "\n".join(t)
 
     maclar_json = json.dumps([{
-        "mac": f"{km['mac']['teams']['home']['name']} - {km['mac']['teams']['away']['name']}",
-        "tercih": km["analiz"]["tercih"],
+        "mac": f"{teams['home']['name']} - {teams['away']['name']}",
+        "tercih": a["tercih"],
         "oran": km["oran"],
-        "olasilik": km["analiz"]["olasilik"]
-    } for km in kupon_maclar], ensure_ascii=False)
+        "olasilik": a["olasilik"]
+    }], ensure_ascii=False)
 
-    kid = save_kupon(cid, maclar_json, toplam_oran, ort_guven)
+    kid = save_kupon(cid, maclar_json, km["oran"], a["guven"], fixture_id, a["tercih"])
 
-    rm = None
-    if kid:
-        rm = {"inline_keyboard": [[
-            {"text": "✅ Tuttu", "callback_data": f"sonuc:tuttu:{kid}"},
-            {"text": "❌ Tutmadı", "callback_data": f"sonuc:tutmadi:{kid}"}
-        ]]}
-
-    send_msg(cid, metin, None, rm)
+    send_msg(cid, metin)
 
 # ==========================================
 # MENU
@@ -611,66 +709,69 @@ def _menu_keyboard():
     ]}
 
 def _menu_text():
-    return (f"🤖 *GOL ALT KUPON BOTU v5*\n\n"
-            f"🎯 Sadece *GOL ALT* bahisleri\n"
+    return (f"🤖 GOL ALT KUPON BOTU v8\n\n"
+            f"🎯 Sadece GOL ALT bahisleri\n"
             f"⚽ Canlı maçlar ({MIN_DAKIKA}-{MAX_DAKIKA}. dk)\n"
             f"🔍 {MAX_TARANAN} maç taranır\n"
-            f"✅ En iyi 2 ALT maçı seçilir\n"
+            f"✅ En yüksek olasılıklı 1 maç\n"
+            f"🤖 Sonuç otomatik kontrol\n"
             f"🧠 Gemini 3.1 Pro analizi\n\n"
-            f"💎 *Haftalık abonelik: {HAFTALIK_UCRET}*\n\n"
+            f"💎 Haftalık abonelik: {HAFTALIK_UCRET}\n\n"
             f"⬇️ Menüden seç:")
 
 def show_menu(cid, mid=None):
-    if mid: edit_message_text(cid, mid, _menu_text(), "Markdown", _menu_keyboard())
-    else: send_msg(cid, _menu_text(), "Markdown", _menu_keyboard())
+    if mid: edit_message_text(cid, mid, _menu_text(), None, _menu_keyboard())
+    else: send_msg(cid, _menu_text(), None, _menu_keyboard())
 
 def show_gecmis(cid, mid=None):
     rows = get_gecmis(cid, 10)
     if not rows:
-        text = "📭 *Geçmiş boş*"
+        text = "📭 Geçmiş boş"
     else:
         s = {"tuttu": "✅", "tutmadi": "❌", None: "⏳"}
-        sat = ["📜 *SON 10 KUPON*", ""]
+        sat = ["📜 SON 10 KUPON", ""]
         for i, (kid, tarih, oran, guven, sonuc) in enumerate(rows, 1):
-            sat.append(f"{i}. Oran: *{oran}* | Güven: %{guven}")
+            sat.append(f"{i}. Oran: {oran} | Güven: %{guven}")
             sat.append(f"     {s.get(sonuc,'?')} {tarih}")
         text = "\n".join(sat)
-    if mid: edit_message_text(cid, mid, text, "Markdown", _ana_menu_buton())
-    else: send_msg(cid, text, "Markdown", _ana_menu_buton())
+    if mid: edit_message_text(cid, mid, text, None, _ana_menu_buton())
+    else: send_msg(cid, text, None, _ana_menu_buton())
 
 def show_istatistik(cid, mid=None):
     st = get_istatistik(cid)
     if st["total"] == 0:
-        text = "📭 *İstatistik yok*"
+        text = "📭 İstatistik yok (henüz sonuçlanmış kupon yok)"
     else:
         sc = st["tuttu"] + st["tutmadi"]
         oran = round(st["tuttu"] / sc * 100, 1) if sc > 0 else 0
-        text = (f"📊 *İSTATİSTİK*\n\n"
-                f"📈 Toplam: *{st['total']}*\n"
-                f"✅ Tuttu: *{st['tuttu']}*\n"
-                f"❌ Tutmadı: *{st['tutmadi']}*\n"
-                f"🎯 Başarı: *%{oran}*")
-    if mid: edit_message_text(cid, mid, text, "Markdown", _ana_menu_buton())
-    else: send_msg(cid, text, "Markdown", _ana_menu_buton())
+        text = (f"📊 İSTATİSTİK\n\n"
+                f"📈 Toplam: {st['total']}\n"
+                f"✅ Tuttu: {st['tuttu']}\n"
+                f"❌ Tutmadı: {st['tutmadi']}\n"
+                f"🎯 Başarı: %{oran}")
+    if mid: edit_message_text(cid, mid, text, None, _ana_menu_buton())
+    else: send_msg(cid, text, None, _ana_menu_buton())
 
 def show_yardim(cid, mid=None):
-    text = (f"❓ *YARDIM - v5*\n\n"
+    text = (f"❓ YARDIM - v8\n\n"
             f"🎯 /start — Menü\n"
             f"⚽ /kupon — ALT kuponu al\n"
             f"📜 /gecmis — Son kuponlar\n"
             f"📊 /istatistik — Başarı oranı\n\n"
-            f"📌 *Bu bot ne yapar?*\n"
+            f"📌 Bu bot ne yapar?\n"
             f"• Sadece canlı maçları tarar\n"
             f"• Dakika: {MIN_DAKIKA}-{MAX_DAKIKA}\n"
             f"• {MAX_TARANAN} maçı analiz eder\n"
             f"• Sadece GOL ALT bahisleri\n"
-            f"• En iyi 2 maçı seçer\n"
+            f"• En yüksek olasılıklı 1 maç\n"
             f"• Olasılık eşiği: %{MIN_OLASILIK}\n"
-            f"• Min şart: {MIN_SART}/7\n\n"
+            f"• Min şart: {MIN_SART}/7\n"
+            f"• 🤖 Maç bitince OTOMATIK sonuç\n"
+            f"• ⏳ Aynı maç {AYNI_MAC_ENGELLE_DK} dk tekrar önerilmez\n\n"
             f"💎 Haftalık abonelik: {HAFTALIK_UCRET}\n\n"
             f"⚠️ Yatırım tavsiyesi değildir.")
-    if mid: edit_message_text(cid, mid, text, "Markdown", _ana_menu_buton())
-    else: send_msg(cid, text, "Markdown", _ana_menu_buton())
+    if mid: edit_message_text(cid, mid, text, None, _ana_menu_buton())
+    else: send_msg(cid, text, None, _ana_menu_buton())
 
 # ==========================================
 # KOMUTLAR
@@ -716,15 +817,6 @@ def handle_callback(cq):
             edit_reply_markup(cid, mid, _ana_menu_buton())
             threading.Thread(target=kupon_olustur, args=(cid,), daemon=True).start()
             return
-
-        if data.startswith("sonuc:"):
-            _, sonuc, kid_str = data.split(":")
-            if update_sonuc(int(kid_str), sonuc):
-                edit_reply_markup(cid, mid, None)
-                e = "✅" if sonuc == "tuttu" else "❌"
-                send_msg(cid, f"{e} Kupon #{kid_str} kaydedildi.")
-            else:
-                send_msg(cid, "⚠️ Bu kupon zaten işaretlenmiş.")
     except Exception as e:
         print(f"callback: {e}", flush=True)
 
@@ -734,12 +826,11 @@ def handle_callback(cq):
 def main():
     threading.Thread(target=run_health_server, daemon=True).start()
     init_db()
-    print("=== ALT KUPON BOTU v5 (SADECE CANLI) BASLADI ===", flush=True)
-    print(f"Dakika aralığı: {MIN_DAKIKA}-{MAX_DAKIKA}", flush=True)
-    print(f"Max taranan: {MAX_TARANAN}", flush=True)
+    threading.Thread(target=sonuc_kontrol_worker, daemon=True).start()
+    print("=== ALT KUPON BOTU v8 BASLADI ===", flush=True)
+    print(f"Dakika: {MIN_DAKIKA}-{MAX_DAKIKA} | Taranan: {MAX_TARANAN} | Olasilik: %{MIN_OLASILIK} | Sart: {MIN_SART}/7", flush=True)
+    print(f"Ayni mac engelleme: {AYNI_MAC_ENGELLE_DK} dk", flush=True)
     print(f"API-Football: {'VAR' if API_FOOTBALL_KEY else 'YOK'}", flush=True)
-    print(f"Gemini: {'VAR' if GEMINI_API_KEY else 'YOK'}", flush=True)
-    print(f"Telegram: {'VAR' if TELEGRAM_TOKEN else 'YOK'}", flush=True)
 
     offset = get_offset()
 
